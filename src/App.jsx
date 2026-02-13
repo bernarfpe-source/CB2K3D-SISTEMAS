@@ -1421,6 +1421,84 @@ function DataTable({ columns, data, onEdit, onDelete }) {
 }
 
 // ============================================================
+// PRODUCT CARD COMPONENT
+// ============================================================
+function ProductCard({ p, onEdit, onProduce, onDelete }) {
+  const { navigateTo } = useContext(AppContext);
+  const [idx, setIdx] = useState(0);
+
+  // Ensure we consistently view valid media
+  const mediaList = useMemo(() => {
+    let list = [];
+    if (p.fotos && p.fotos.length > 0) list = p.fotos;
+    else if (p.imagemUrl) list = [p.imagemUrl];
+    else list = [];
+    return list;
+  }, [p.fotos, p.imagemUrl]);
+
+  const current = mediaList[idx] || null;
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.05)", border: "1px solid #E5E5EA", padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ height: 160, background: "#F2F2F7", position: "relative" }}>
+        {(() => {
+          if (!current) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#C7C7CC", fontSize: 40 }}>📦</div>;
+
+          const isVideo = (typeof current === 'string') && (current.startsWith("data:video") || current.endsWith(".mp4") || current.endsWith(".webm") || current.endsWith(".mov"));
+
+          return isVideo ?
+            <video src={current} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted loop autoPlay playsInline /> :
+            <img src={current} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.2s" }} />;
+        })()}
+
+        <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.9)", padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+          {p.categoria}
+        </div>
+
+        {/* Navigation Dots */}
+        {mediaList.length > 1 && (
+          <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 6, zIndex: 10 }}>
+            {mediaList.map((_, i) => (
+              <div key={i}
+                onClick={(e) => { e.stopPropagation(); setIdx(i); }}
+                style={{
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: i === idx ? "#007AFF" : "rgba(255,255,255,0.6)",
+                  cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
+                  border: "1px solid rgba(0,0,0,0.1)"
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E", marginBottom: 4 }}>{p.nome}</div>
+        <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 12, flex: 1, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.descricao || "Sem descrição"}</div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#34C759" }}>R$ {parseFloat(p.preco || 0).toFixed(2)}</div>
+            {(p.estoqueAtual > 0) && <div style={{ fontSize: 11, color: "#007AFF", fontWeight: 600, marginTop: 2 }}>{p.estoqueAtual} un</div>}
+          </div>
+          <div style={{ fontSize: 11, color: "#8E8E93", textAlign: "right" }}>
+            <div>Base: R$ {parseFloat(p.custoBase || 0).toFixed(2)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #F2F2F7" }}>
+          <button onClick={() => onProduce(p)} style={{ ...btnSecondary, width: 36, padding: 0, fontSize: 16, background: "#E3F2FD", color: "#007AFF" }} title="Produzir">🔨</button>
+          <button onClick={() => onEdit(p)} style={{ ...btnSecondary, flex: 1, fontSize: 12 }}>Editar</button>
+          <button onClick={() => navigateTo && navigateTo("orcamentos", { action: "new", product: p })} style={{ ...btnSecondary, flex: 1, fontSize: 12, background: "#E8F5E9", color: "#16A34A" }}>Orçar</button>
+          <button onClick={() => onDelete(p.id)} style={{ ...btnSecondary, width: 36, padding: 0, color: "#FF3B30", background: "rgba(255,59,48,0.1)", fontSize: 14 }} title="Excluir">✕</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // PRODUCTS MODULE (CUSTOM)
 // ============================================================
 function ProductsModule() {
@@ -1532,68 +1610,13 @@ function ProductsModule() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 20 }}>
         {filtered.map(p => (
-          <div key={p.id} style={{ ...cardStyle, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <div style={{ height: 160, background: "#F2F2F7", position: "relative" }}>
-              {(() => {
-                const media = p.fotos?.[0] || p.imagemUrl;
-                if (!media) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#C7C7CC", fontSize: 40 }}>📦</div>;
-
-                const isVideo = (typeof media === 'string') && (media.startsWith("data:video") || media.endsWith(".mp4") || media.endsWith(".webm") || media.endsWith(".mov"));
-
-                if (isVideo) {
-                  return <video src={media} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted loop autoPlay playsInline />;
-                }
-                return <img src={media} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
-              })()}
-              <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.9)", padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
-                {p.categoria}
-              </div>
-            </div>
-
-            <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E", marginBottom: 4 }}>{p.nome}</div>
-              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 12, flex: 1, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.descricao || "Sem descrição"}</div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#34C759" }}>R$ {parseFloat(p.preco || 0).toFixed(2)}</div>
-                  {(p.estoqueAtual > 0) && <div style={{ fontSize: 11, color: "#007AFF", fontWeight: 600, marginTop: 2 }}>Em Estoque: {p.estoqueAtual} un</div>}
-                </div>
-                <div style={{ fontSize: 11, color: "#8E8E93", textAlign: "right" }}>
-                  <div>Base: R$ {parseFloat(p.custoBase || 0).toFixed(2)}</div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #F2F2F7" }}>
-                <button
-                  onClick={() => handleProduce(p)}
-                  style={{ ...btnSecondary, width: 36, padding: 0, fontSize: 16, background: "#E3F2FD", color: "#007AFF" }}
-                  title="Produzir (Descontar Material e Adicionar ao Estoque)"
-                >
-                  🔨
-                </button>
-                <button
-                  onClick={() => { setEditingProduct(p); setShowModal(true); }}
-                  style={{ ...btnSecondary, flex: 1, fontSize: 12 }}
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={() => navigateTo && navigateTo("orcamentos", { action: "new", product: p })}
-                  style={{ ...btnSecondary, flex: 1, fontSize: 12, background: "#E8F5E9", color: "#16A34A" }}
-                >
-                  Orçar
-                </button>
-                <button
-                  onClick={() => handleDelete(p.id)}
-                  style={{ ...btnSecondary, width: 36, padding: 0, color: "#FF3B30", background: "rgba(255,59,48,0.1)", fontSize: 14 }}
-                  title="Excluir Produto"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          </div>
+          <ProductCard
+            key={p.id}
+            p={p}
+            onEdit={(prod) => { setEditingProduct(prod); setShowModal(true); }}
+            onProduce={(prod) => handleProduce(prod)}
+            onDelete={(id) => handleDelete(id)}
+          />
         ))}
       </div>
 
