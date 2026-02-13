@@ -73,7 +73,19 @@ const initialData = {
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeModule, setActiveModule] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      if (mobile) setSidebarOpen(false);
+      else setSidebarOpen(true);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // Initialize from localStorage or fallback to initialData
   const [data, setData] = useState(() => {
@@ -195,28 +207,36 @@ export default function App() {
       <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif", display: "flex", height: "100vh", background: "#F2F2F7", color: "#1C1C1E", overflow: "hidden" }}>
 
         {/* SIDEBAR */}
+        {/* SIDEBAR */}
         <aside style={{
-          width: sidebarOpen ? 240 : 64,
+          width: isMobile ? (sidebarOpen ? "80%" : 0) : (sidebarOpen ? 240 : 64),
+          maxWidth: 300,
           background: "#FFFFFF",
           borderRight: "1px solid #E5E5EA",
-          transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)",
+          transition: "all 0.3s cubic-bezier(0.4,0,0.2,1)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
           flexShrink: 0,
+          position: isMobile ? "fixed" : "static",
+          zIndex: 100,
+          height: "100%",
+          boxShadow: isMobile && sidebarOpen ? "0 0 50px rgba(0,0,0,0.5)" : "none",
         }}>
           <div style={{ padding: sidebarOpen ? "20px 16px" : "20px 12px", borderBottom: "1px solid #E5E5EA", display: "flex", alignItems: "center", gap: 10, minHeight: 68 }}>
             <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "transparent", border: "none", padding: 0, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-              <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 8, boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}>
-                <rect width="100" height="100" fill="#00589F" />
-                {/* Nozzle */}
-                <rect x="30" y="25" width="40" height="8" fill="white" />
-                <rect x="42" y="33" width="16" height="12" fill="white" />
-                <polygon points="42,45 58,45 50,55" fill="white" />
-                {/* Cube */}
-                <path d="M50 58 L35 65 L35 80 L50 88 L65 80 L65 65 Z" fill="none" stroke="white" strokeWidth="3" />
-                <path d="M50 58 L50 88 M35 65 L50 72.5 M65 65 L50 72.5 M35 80 L50 72.5 M65 80 L50 72.5" stroke="white" strokeWidth="2" />
-              </svg>
+              {isMobile && sidebarOpen ? <span style={{ fontSize: 24 }}>✕</span> : (
+                <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 8, boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}>
+                  <rect width="100" height="100" fill="#00589F" />
+                  {/* Nozzle */}
+                  <rect x="30" y="25" width="40" height="8" fill="white" />
+                  <rect x="42" y="33" width="16" height="12" fill="white" />
+                  <polygon points="42,45 58,45 50,55" fill="white" />
+                  {/* Cube */}
+                  <path d="M50 58 L35 65 L35 80 L50 88 L65 80 L65 65 Z" fill="none" stroke="white" strokeWidth="3" />
+                  <path d="M50 58 L50 88 M35 65 L50 72.5 M65 65 L50 72.5 M35 80 L50 72.5 M65 80 L50 72.5" stroke="white" strokeWidth="2" />
+                </svg>
+              )}
             </button>
             {sidebarOpen && (
               <div style={{ overflow: "hidden" }}>
@@ -258,6 +278,7 @@ export default function App() {
             {sidebarOpen && <div style={{ fontSize: 11, color: "#8E8E93", textAlign: "center" }}>v2.2 • Apple Light</div>}
           </div>
         </aside>
+        {isMobile && sidebarOpen && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 99 }} />}
 
         {/* MAIN */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -269,9 +290,14 @@ export default function App() {
             WebkitBackdropFilter: "blur(20px)",
           }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: "#000000", letterSpacing: -0.6 }}>
-                {modules.find(m => m.key === activeModule)?.label}
-              </h1>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {isMobile && (
+                  <button onClick={() => setSidebarOpen(true)} style={{ background: "transparent", border: "none", fontSize: 24, padding: 4, cursor: "pointer" }}>☰</button>
+                )}
+                <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 28, fontWeight: 700, color: "#000000", letterSpacing: -0.6 }}>
+                  {modules.find(m => m.key === activeModule)?.label}
+                </h1>
+              </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <span style={{ fontSize: 13, color: "#8E8E93", fontWeight: 500 }}>{new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</span>
@@ -280,7 +306,14 @@ export default function App() {
           </header>
 
           {/* CONTENT */}
-          <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
+          <div style={{ flex: 1, overflow: "auto", padding: isMobile ? 12 : 28, position: "relative" }}>
+            <style>{`
+              @media (max-width: 768px) {
+                .modal-content { width: 95% !important; margin: 10px !important; max-height: 90vh !important; }
+                .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr !important; }
+                input, select, button { min-height: 44px; } /* Touch targets */
+              }
+            `}</style>
             {activeModule === "dashboard" && <DashboardModule />}
             {activeModule === "clientes" && <CrudModule entity="clientes" title="Clientes" fields={clienteFields} />}
             {activeModule === "produtos" && <ProductsModule />}
