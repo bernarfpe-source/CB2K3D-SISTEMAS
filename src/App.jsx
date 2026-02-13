@@ -1674,6 +1674,29 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     }
   }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco]);
 
+  // ENABLE PASTE (Ctrl+V) for Images
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf("image") !== -1) {
+          const blob = items[i].getAsFile();
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            setForm(prev => {
+              const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), event.target.result];
+              return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
+            });
+            // alert("Imagem colada da área de transferência!"); // Optional feedback
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, []);
+
   return (
     <Modal title={product ? "Editar Produto" : "Novo Produto"} onClose={onClose} width={900}>
       <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
