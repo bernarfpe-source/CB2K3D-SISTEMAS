@@ -1438,6 +1438,51 @@ function ProductsModule() {
     setEditingProduct(null);
   };
 
+  const handleProduce = (product) => {
+    const qtyStr = prompt(`Quantas unidades de '${product.nome}' você produziu para estoque? (Irá descontar material)`, "1");
+    if (!qtyStr) return;
+    const qty = parseInt(qtyStr);
+    if (!qty || qty <= 0) return;
+
+    setData(prev => {
+      let newMaterials = [...prev.materiais];
+      let newProducts = [...prev.produtos];
+      let log = [];
+
+      if (product.composicao) {
+        product.composicao.forEach(comp => {
+          const totalGrams = (comp.peso || 0) * qty;
+          let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+          if (matIndex === -1 && comp.tipo && comp.cor) {
+            const tType = (comp.tipo || "").toLowerCase().trim();
+            const tColor = (comp.cor || "").toLowerCase().trim();
+            matIndex = newMaterials.findIndex(m => {
+              const mT = (m.tipo || "").toLowerCase().trim();
+              const mC = (m.cor || "").toLowerCase().trim();
+              return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
+            });
+          }
+
+          if (matIndex >= 0) {
+            const current = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
+            newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, current - totalGrams) };
+            log.push(`${newMaterials[matIndex].nome}: -${totalGrams}g`);
+          }
+        });
+      }
+
+      const pIndex = newProducts.findIndex(p => p.id === product.id);
+      if (pIndex >= 0) {
+        const currentStock = newProducts[pIndex].estoqueAtual || 0;
+        newProducts[pIndex] = { ...newProducts[pIndex], estoqueAtual: currentStock + qty };
+      }
+
+      showToast(`Produzido +${qty} un. ${log.join(", ")}`, "success");
+
+      return { ...prev, materiais: newMaterials, produtos: newProducts };
+    });
+  };
+
   return (
     <div style={{ animation: "fadeIn 0.4s ease" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -1481,6 +1526,13 @@ function ProductsModule() {
               </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #F2F2F7" }}>
+                <button
+                  onClick={() => handleProduce(p)}
+                  style={{ ...btnSecondary, width: 36, padding: 0, fontSize: 16, background: "#E3F2FD", color: "#007AFF" }}
+                  title="Produzir (Descontar Material e Adicionar ao Estoque)"
+                >
+                  🔨
+                </button>
                 <button
                   onClick={() => { setEditingProduct(p); setShowModal(true); }}
                   style={{ ...btnSecondary, flex: 1, fontSize: 12 }}
@@ -2096,62 +2148,53 @@ function OrcamentosModule() {
     setData(prev => {
       // 1. Calculate new stock
       let newMaterials = [...prev.materiais];
+      let newProducts = [...prev.produtos];
       let stockUpdated = false;
 
       if (item.itens && Array.isArray(item.itens)) {
         item.itens.forEach(orderItem => {
-          // Find product by name (handle exact and case-insensitive/trimmed matches)
-          let product = prev.produtos.find(p => p.nome === orderItem.produto);
-          if (!product) {
-            product = prev.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
-          }
+          // Find product index to update stock
+          let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
+          if (prodIndex === -1) prodIndex = newProducts.findIndex(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
 
-          if (product && product.composicao) {
-            product.composicao.forEach(comp => {
-              // 1. Try to find by ID (Robust: handle numbers, strings, spaces)
-              let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+          let qtyNeeded = orderItem.quantidade || 0;
+          let qtyToMake = qtyNeeded;
 
-              // 2. Fallback: If ID not found (stale ID), try matching by Type and Color (Trimmed, Lowercase)
-              if (matIndex === -1 && comp.tipo && comp.cor) {
-                console.warn(`Material ID ${comp.materialId} not found. Trying fallback by type/color: ${comp.tipo} ${comp.cor}`);
+          if (prodIndex >= 0) {
+            const available = newProducts[prodIndex].estoqueAtual || 0;
+            // 1. Try to fulfill from Stock
+            if (available > 0) {
+              const qtyFromStock = Math.min(qtyNeeded, available);
+              qtyToMake = qtyNeeded - qtyFromStock;
 
-                const targetType = (comp.tipo || "").toLowerCase().trim();
-                const targetColor = (comp.cor || "").toLowerCase().trim();
+              newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - qtyFromStock };
+              if (qtyFromStock > 0) showToast(`${qtyFromStock} un de '${newProducts[prodIndex].nome}' via Estoque`, "info");
+            }
 
-                matIndex = newMaterials.findIndex(m => {
-                  const mType = (m.tipo || "").toLowerCase().trim();
-                  const mColor = (m.cor || "").toLowerCase().trim();
-                  // Match Type AND Color
-                  if (mType === targetType && mColor === targetColor) return true;
+            // 2. Manufacture remainder
+            if (qtyToMake > 0 && newProducts[prodIndex].composicao) {
+              newProducts[prodIndex].composicao.forEach(comp => {
+                let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                if (matIndex === -1 && comp.tipo && comp.cor) {
+                  // Fallback lookup
+                  const tType = (comp.tipo || "").toLowerCase().trim();
+                  const tColor = (comp.cor || "").toLowerCase().trim();
+                  matIndex = newMaterials.findIndex(m => {
+                    const mT = (m.tipo || "").toLowerCase().trim();
+                    const mC = (m.cor || "").toLowerCase().trim();
+                    return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
+                  });
+                }
 
-                  // 3. Last Resort: Check if Material NAME contains Type AND Color
-                  const mName = (m.nome || "").toLowerCase();
-                  if (mName.includes(targetType) && mName.includes(targetColor)) return true;
-
-                  return false;
-                });
-              }
-
-              if (matIndex >= 0) {
-                const deductAmount = (comp.peso || 0) * (orderItem.quantidade || 0);
-                const currentStock = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
-
-                console.log(`Deducting ${deductAmount}g from ${newMaterials[matIndex].nome} (ID: ${newMaterials[matIndex].id})`);
-
-                newMaterials[matIndex] = {
-                  ...newMaterials[matIndex],
-                  quantidadeAtual: Math.max(0, currentStock - deductAmount)
-                };
-                stockUpdated = true;
-              } else {
-                console.error(`Material not found for deduction: ID=${comp.materialId}, Tipo=${comp.tipo}, Cor=${comp.cor}`);
-                // Notify user subtly if specific material fails
-                showToast(`Erro: Material ${comp.tipo} ${comp.cor} não encontrado no estoque.`, "error");
-              }
-            });
-          } else {
-            console.warn(`Produto não encontrado para dedução: ${orderItem.produto}`);
-            showToast(`Aviso: Produto '${orderItem.produto}' não encontrado. Estoque não alterado.`, "warning");
+                if (matIndex >= 0) {
+                  // Deduct based on qtyToMake
+                  const deductAmount = (comp.peso || 0) * qtyToMake;
+                  const currentStock = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
+                  newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, currentStock - deductAmount) };
+                  stockUpdated = true;
+                }
+              });
+            }
           }
         });
       }
@@ -2178,6 +2221,7 @@ function OrcamentosModule() {
       return {
         ...prev,
         materiais: newMaterials,
+        produtos: newProducts,
         pedidos: updatedPedidos,
         financeiro: newFinanceiro
       };
@@ -2707,6 +2751,7 @@ function KanbanModule() {
 
     if (draggedItem.entity === "pedido") {
       let updatedMaterials = [...data.materiais];
+      let newProducts = [...data.produtos];
       let newFinanceiro = { ...data.financeiro, contasReceber: [...data.financeiro.contasReceber] };
       let moveMsg = `Pedido movido para ${newStatus}`;
 
@@ -2723,59 +2768,63 @@ function KanbanModule() {
         // Loop through ALL items in the order
         if (draggedItem.itens && draggedItem.itens.length > 0) {
           draggedItem.itens.forEach(orderItem => {
-            let produto = data.produtos.find(p => p.nome === orderItem.produto);
-            if (!produto) produto = data.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+            let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
+            if (prodIndex === -1) prodIndex = newProducts.findIndex(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
 
-            if (produto && produto.composicao) {
-              produto.composicao.forEach(comp => {
-                const totalGramsNeeded = (comp.peso || 0) * (orderItem.quantidade || 0);
+            let qtyToMake = orderItem.quantidade || 0;
 
-                // Robust Lookup (same as handleApprove)
-                let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-                if (stockIndex === -1 && comp.tipo && comp.cor) {
-                  const targetType = (comp.tipo || "").toLowerCase().trim();
-                  const targetColor = (comp.cor || "").toLowerCase().trim();
-                  stockIndex = updatedMaterials.findIndex(m => {
-                    const mType = (m.tipo || "").toLowerCase().trim();
-                    const mColor = (m.cor || "").toLowerCase().trim();
-                    if (mType === targetType && mColor === targetColor) return true;
-                    const mName = (m.nome || "").toLowerCase();
-                    if (mName.includes(targetType) && mName.includes(targetColor)) return true;
-                    return false;
-                  });
-                }
+            if (prodIndex >= 0) {
+              const available = newProducts[prodIndex].estoqueAtual || 0;
+              if (available > 0) {
+                const take = Math.min(qtyToMake, available);
+                qtyToMake -= take;
+                newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - take };
+                deductedLog.push(`${newProducts[prodIndex].nome}: -${take} (Estoque)`);
+              }
 
-                if (stockIndex >= 0) {
-                  const stockItem = updatedMaterials[stockIndex];
-                  updatedMaterials[stockIndex] = {
-                    ...stockItem,
-                    quantidadeAtual: Math.max(0, stockItem.quantidadeAtual - totalGramsNeeded)
-                  };
-                  deductedLog.push(`${stockItem.nome}: -${totalGramsNeeded}g`);
-                } else {
-                  deductedLog.push(`FALTA: ${comp.tipo} ${comp.cor}`);
-                }
-              });
+              if (qtyToMake > 0 && newProducts[prodIndex].composicao) {
+                newProducts[prodIndex].composicao.forEach(comp => {
+                  const totalGramsNeeded = (comp.peso || 0) * qtyToMake;
+                  // Robust Lookup
+                  let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                  if (stockIndex === -1 && comp.tipo && comp.cor) {
+                    const targetType = (comp.tipo || "").toLowerCase().trim();
+                    const targetColor = (comp.cor || "").toLowerCase().trim();
+                    stockIndex = updatedMaterials.findIndex(m => {
+                      const mT = (m.tipo || "").toLowerCase().trim();
+                      const mC = (m.cor || "").toLowerCase().trim();
+                      return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
+                    });
+                  }
+
+                  if (stockIndex >= 0) {
+                    updatedMaterials[stockIndex] = { ...updatedMaterials[stockIndex], quantidadeAtual: Math.max(0, updatedMaterials[stockIndex].quantidadeAtual - totalGramsNeeded) };
+                    deductedLog.push(`${updatedMaterials[stockIndex].nome}: -${totalGramsNeeded}g`);
+                  } else {
+                    deductedLog.push(`FALTA: ${comp.tipo} ${comp.cor}`);
+                  }
+                });
+              }
             }
           });
-          if (deductedLog.length > 0) moveMsg += `. Estoque: ${deductedLog.join(", ")}`;
+          if (deductedLog.length > 0) moveMsg += `. Consumo: ${deductedLog.join(", ")}`;
+        }
 
-          // FINANCE: Auto-generate Receivable on Kanban Drop
-          const billId = draggedItem.id;
-          const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${billId}`));
+        // FINANCE: Auto-generate Receivable on Kanban Drop
+        const billId = draggedItem.id;
+        const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${billId}`));
 
-          if (!billExists) {
-            const clientName = data.clientes.find(c => c.id === draggedItem.clienteId)?.nome || "Cliente";
-            newFinanceiro.contasReceber.push({
-              id: generateId(),
-              descricao: `Pedido #${billId} - ${clientName}`,
-              valor: parseFloat(draggedItem.valorTotal || 0),
-              dataVencimento: new Date().toISOString().split('T')[0],
-              status: "pendente",
-              formaPagamento: draggedItem.formaPagamento || "PIX"
-            });
-            moveMsg += " + Conta Gerada";
-          }
+        if (!billExists) {
+          const clientName = data.clientes.find(c => c.id === draggedItem.clienteId)?.nome || "Cliente";
+          newFinanceiro.contasReceber.push({
+            id: generateId(),
+            descricao: `Pedido #${billId} - ${clientName}`,
+            valor: parseFloat(draggedItem.valorTotal || 0),
+            dataVencimento: new Date().toISOString().split('T')[0],
+            status: "pendente",
+            formaPagamento: draggedItem.formaPagamento || "PIX"
+          });
+          moveMsg += " + Conta Gerada";
         }
       } else if (!isConsuming(newStatus) && isConsuming(draggedItem.status)) {
         // REFUND LOGIC: Moving from Consuming -> Non-Consuming (e.g. Producao -> Orcamento)
@@ -2824,6 +2873,7 @@ function KanbanModule() {
       setData(prev => ({
         ...prev,
         financeiro: newFinanceiro,
+        produtos: newProducts,
         pedidos: prev.pedidos.map(p => p.id === draggedItem.id ? { ...p, status: newStatus } : p),
         materiais: updatedMaterials
       }));
