@@ -1719,81 +1719,118 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           </div>
         </div>
 
-        {/* SECTION 2: PRODUCTION */}
+        {/* SECTION 2: PRODUCTION (Assembly) */}
         <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRODUÇÃO & MATERIAIS</h3>
-
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Tempo de Impressão</label>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div style={{ position: "relative", width: 100 }}>
-                <input
-                  type="number" min="0"
-                  value={Math.floor((form.tempoImpressao || 0) / 60)}
-                  onChange={e => {
-                    const h = parseInt(e.target.value) || 0;
-                    const m = (form.tempoImpressao || 0) % 60;
-                    update("tempoImpressao", (h * 60) + m);
-                  }}
-                  style={{ ...inputStyle, paddingRight: 30 }}
-                />
-                <span style={{ position: "absolute", right: 10, top: 12, fontSize: 11, color: "#8E8E93" }}>h</span>
-              </div>
-              <div style={{ position: "relative", width: 100 }}>
-                <input
-                  type="number" min="0" max="59"
-                  value={(form.tempoImpressao || 0) % 60}
-                  onChange={e => {
-                    const m = parseInt(e.target.value) || 0;
-                    const h = Math.floor((form.tempoImpressao || 0) / 60);
-                    update("tempoImpressao", (h * 60) + m);
-                  }}
-                  style={{ ...inputStyle, paddingRight: 30 }}
-                />
-                <span style={{ position: "absolute", right: 10, top: 12, fontSize: 11, color: "#8E8E93" }}>min</span>
-              </div>
-              <span style={{ fontSize: 12, color: "#8E8E93", marginLeft: 8 }}>
-                Total: <strong>{form.tempoImpressao} min</strong>
-              </span>
-            </div>
-          </div>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>ESTRUTURA DE PRODUÇÃO (COMPONENTES)</h3>
 
           <div style={{ background: "#F9F9F9", borderRadius: 12, padding: 16, border: "1px solid #E5E5EA" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <label style={{ fontSize: 13, fontWeight: 600 }}>Receita de Materiais (Composição)</label>
-              <button onClick={() => update("composicao", [...(form.composicao || []), { materialId: "", peso: 0, tipo: "PLA", cor: "" }])} style={{ ...btnSecondary, fontSize: 11 }}>+ Adicionar Material</button>
+            <div style={{ marginBottom: 16 }}>
+              {(form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }])).map((part, idx, arr) => (
+                <div key={idx} style={{ background: "#fff", border: "1px solid #E5E5EA", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  {/* Part Photo */}
+                  <div style={{ width: 60, height: 60, background: "#F2F2F7", borderRadius: 6, position: "relative", flexShrink: 0, overflow: "hidden", border: "1px dashed #C7C7CC" }}>
+                    {part.foto ? <img src={part.foto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 20, color: "#C7C7CC" }}>📷</div>}
+                    <input type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} onChange={(e) => {
+                      if (e.target.files[0]) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const newParts = [...arr];
+                          newParts[idx] = { ...part, foto: reader.result };
+                          // Update Logic Inline
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        };
+                        reader.readAsDataURL(e.target.files[0]);
+                      }
+                    }} />
+                  </div>
+
+                  {/* Part Details */}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
+                      <input placeholder="Nome da Parte (ex: Base, Tampa)" value={part.nome} onChange={e => {
+                        const newParts = [...arr]; newParts[idx] = { ...part, nome: e.target.value };
+                        // Update Sync
+                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                        const newComposicao = newParts.map(p => {
+                          const m = materials.find(x => String(x.id) === String(p.materialId));
+                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                        });
+                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                      }} style={{ ...inputStyle, flex: 1, fontWeight: "600" }} />
+                      {arr.length > 1 && <button onClick={() => {
+                        const newParts = arr.filter((_, i) => i !== idx);
+                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                        const newComposicao = newParts.map(p => {
+                          const m = materials.find(x => String(x.id) === String(p.materialId));
+                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                        });
+                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                      }} style={{ ...btnSecondary, color: "#FF3B30", padding: "0 8px" }}>✕</button>}
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Material</label>
+                        <select value={part.materialId} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, materialId: e.target.value };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }}>
+                          <option value="">Selecione...</option>
+                          {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor})</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Peso (g)</label>
+                        <input type="number" min="0" value={part.peso} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, peso: parseFloat(e.target.value) || 0 };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Tempo (min)</label>
+                        <input type="number" min="0" value={part.tempo} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, tempo: parseFloat(e.target.value) || 0 };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          // Just update time (and sync composicao just in case, though not needed for time)
+                          setForm(prev => ({ ...prev, partes: newParts, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
 
-            {(form.composicao || []).map((item, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 100px 40px", gap: 10, marginBottom: 10 }}>
-                <select
-                  value={item.materialId}
-                  onChange={e => {
-                    // Use loose comparison to handle string/number ID mismatch key
-                    const m = materials.find(x => x.id == e.target.value);
-                    const newC = [...form.composicao];
-                    newC[i] = { ...newC[i], materialId: e.target.value, tipo: m?.tipo || "", cor: m?.cor || "" };
-                    update("composicao", newC);
-                  }}
-                  style={inputStyle}
-                >
-                  <option value="">Selecione do Estoque...</option>
-                  {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor}) - R$ {(m.custoKg / 1000).toFixed(2)}/g</option>)}
-                </select>
-                <div style={{ position: "relative" }}>
-                  <input type="number" value={item.peso} onChange={e => {
-                    const newC = [...form.composicao];
-                    newC[i] = { ...newC[i], peso: parseFloat(e.target.value) };
-                    update("composicao", newC);
-                  }} style={inputStyle} placeholder="g" />
-                  <span style={{ position: "absolute", right: 28, top: 10, fontSize: 12, color: "#8E8E93" }}>g</span>
-                </div>
-                <button onClick={() => update("composicao", form.composicao.filter((_, idx) => idx !== i))} style={{ ...btnSecondary, color: "#FF3B30", background: "rgba(255,59,48,0.1)" }}>✕</button>
-              </div>
-            ))}
+            <button onClick={() => {
+              const currentParts = form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }]);
+              const newParts = [...currentParts, { id: Date.now(), nome: `Parte ${currentParts.length + 1}`, materialId: "", peso: 0, tempo: 0, foto: "" }];
+              // Sync
+              const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+              const newComposicao = newParts.map(p => {
+                const m = materials.find(x => String(x.id) === String(p.materialId));
+                return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+              });
+              setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+            }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", border: "1px dashed #007AFF", color: "#007AFF" }}>+ Adicionar Parte / Componente</button>
 
-            <div style={{ marginTop: 10, fontSize: 13, color: "#8E8E93", textAlign: "right" }}>
-              Peso Total da Peça: <strong>{(form.composicao || []).reduce((a, b) => a + (b.peso || 0), 0)}g</strong>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666", padding: "0 4px" }}>
+              <span>Tempo Total: <strong>{form.tempoImpressao || 0} min</strong></span>
+              <span>Peso Total: <strong>{(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)} g</strong></span>
             </div>
           </div>
         </div>
