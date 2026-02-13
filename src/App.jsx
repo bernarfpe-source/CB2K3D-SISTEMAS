@@ -1690,7 +1690,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
             <div>
               <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Categoria</label>
               <select value={form.categoria} onChange={e => update("categoria", e.target.value)} style={inputStyle}>
-                {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
+                {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Chaveiros", "Pets", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
