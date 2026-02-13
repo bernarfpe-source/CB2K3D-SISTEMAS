@@ -1642,96 +1642,51 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         {/* SECTION 1: INFO */}
         <div style={{ marginBottom: 32 }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PERFIL DE IMPRESSÃO</h3>
-          {/* Printer Selector */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 8 }}>Selecione sua impressora</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {["A1", "A1 mini", "P1P", "P1S", "X1C", "V400", "Ender 3"].map(p => (
-                <button key={p} onClick={() => setForm(prev => ({ ...prev, perfil: { ...(prev.perfil || {}), impressora: p } }))}
-                  style={{
-                    padding: "6px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none",
-                    background: (form.perfil?.impressora || "A1") === p ? "#34C759" : "#F2F2F7",
-                    color: (form.perfil?.impressora || "A1") === p ? "#fff" : "#1C1C1E"
-                  }}
-                >{p}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Profile Card & Details */}
-          <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 24, alignItems: "start" }}>
-
-            {/* THE CARD (Reference Style) */}
-            <div style={{ border: "1px solid #34C759", borderRadius: 12, overflow: "hidden", background: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}>
-              <div style={{ height: 160, background: "#eee", position: "relative" }}>
-                {form.fotos?.[0] || form.imagemUrl ? <img src={form.fotos?.[0] || form.imagemUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 30 }}>📦</div>}
-                <div style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.7)", color: "#FFD60A", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>★ 5.0</div>
+          <div style={{ background: "#F9F9F9", padding: 16, borderRadius: 12, border: "1px solid #E5E5EA" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Altura de Camada (mm)</label>
+                <input value={form.perfil?.camada || "0.20"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), camada: e.target.value } }))} style={inputStyle} />
               </div>
-              <div style={{ padding: 12 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{form.nome || "Nome do Produto"}</div>
-                <div style={{ fontSize: 11, color: "#3C3C43", marginBottom: 8, lineHeight: "1.4" }}>
-                  {(form.perfil?.camada || "0.20")}mm de camada, {(form.perfil?.paredes || 3)} paredes, {(form.perfil?.preenchimento || "15%")} de preenchimento
-                </div>
-                <div style={{ display: "inline-block", background: "#E8F5E9", color: "#34C759", fontSize: 10, padding: "2px 6px", borderRadius: 4, fontWeight: 600, marginBottom: 12 }}>Projetista</div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, color: "#8E8E93" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>⏱ {(form.tempoImpressao / 60).toFixed(1)}h</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>⚖️ {(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)}g</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>⚅ {(form.partes?.length || 1)} pratos</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>🔧 {(form.perfil?.bico || "0.4")}mm</div>
-                </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Paredes (Perímetros)</label>
+                <input type="number" value={form.perfil?.paredes || 3} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), paredes: parseInt(e.target.value) } }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Preenchimento</label>
+                <input value={form.perfil?.preenchimento || "15%"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), preenchimento: e.target.value } }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Bico (Nozzle)</label>
+                <select value={form.perfil?.bico || "0.4"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), bico: e.target.value } }))} style={inputStyle}>
+                  <option value="0.2">0.2 mm</option>
+                  <option value="0.4">0.4 mm</option>
+                  <option value="0.6">0.6 mm</option>
+                  <option value="0.8">0.8 mm</option>
+                </select>
               </div>
             </div>
 
-            {/* Inputs */}
-            <div>
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Detalhes do Perfil</h4>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Altura de Camada (mm)</label>
-                  <input value={form.perfil?.camada || "0.20"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), camada: e.target.value } }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Paredes (Perímetros)</label>
-                  <input type="number" value={form.perfil?.paredes || 3} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), paredes: parseInt(e.target.value) } }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Preenchimento</label>
-                  <input value={form.perfil?.preenchimento || "15%"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), preenchimento: e.target.value } }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Bico (Nozzle)</label>
-                  <select value={form.perfil?.bico || "0.4"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), bico: e.target.value } }))} style={inputStyle}>
-                    <option value="0.2">0.2 mm</option>
-                    <option value="0.4">0.4 mm</option>
-                    <option value="0.6">0.6 mm</option>
-                    <option value="0.8">0.8 mm</option>
-                  </select>
-                </div>
-              </div>
-
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Filamentos Usados</h4>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {(form.composicao || []).map((m, i) => {
-                  const mat = materials.find(x => x.id == m.materialId);
-                  // Try to map color name to hex? Simplified mapping
-                  const colorMap = { "Preto": "#000", "Branco": "#eee", "Cinza": "#888", "Azul": "#007AFF", "Vermelho": "#FF3B30", "Verde": "#34C759", "Amarelo": "#FFD60A", "Laranja": "#FF9500", "Roxo": "#AF52DE" };
-                  const bg = colorMap[mat?.cor] || "#333";
-                  const fg = ["Branco", "Amarelo"].includes(mat?.cor) ? "#000" : "#fff";
-                  return (
-                    <div key={i} style={{
-                      background: bg, color: fg,
-                      padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
-                      border: "1px solid rgba(0,0,0,0.1)", display: "flex", alignItems: "center", gap: 4
-                    }}>
-                      <span style={{ textTransform: "uppercase" }}>{mat?.tipo || "PLA"}</span>
-                      <span style={{ opacity: 0.8, fontWeight: 400 }}>|</span>
-                      <span>{m.peso}g</span>
-                    </div>
-                  );
-                })}
-                {(form.composicao || []).length === 0 && <span style={{ fontSize: 12, color: "#999" }}>Nenhum material adicionado.</span>}
-              </div>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Filamentos Usados</h4>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {(form.composicao || []).map((m, i) => {
+                const mat = materials.find(x => x.id == m.materialId);
+                const colorMap = { "Preto": "#000", "Branco": "#eee", "Cinza": "#888", "Azul": "#007AFF", "Vermelho": "#FF3B30", "Verde": "#34C759", "Amarelo": "#FFD60A", "Laranja": "#FF9500", "Roxo": "#AF52DE" };
+                const bg = colorMap[mat?.cor] || "#333";
+                const fg = ["Branco", "Amarelo"].includes(mat?.cor) ? "#000" : "#fff";
+                return (
+                  <div key={i} style={{
+                    background: bg, color: fg,
+                    padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+                    border: "1px solid rgba(0,0,0,0.1)", display: "flex", alignItems: "center", gap: 4
+                  }}>
+                    <span style={{ textTransform: "uppercase" }}>{mat?.tipo || "PLA"}</span>
+                    <span style={{ opacity: 0.8, fontWeight: 400 }}>|</span>
+                    <span>{m.peso}g</span>
+                  </div>
+                );
+              })}
+              {(form.composicao || []).length === 0 && <span style={{ fontSize: 12, color: "#999" }}>Nenhum material adicionado.</span>}
             </div>
           </div>
         </div>
