@@ -1501,8 +1501,8 @@ function ProductsModule() {
         {filtered.map(p => (
           <div key={p.id} style={{ ...cardStyle, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <div style={{ height: 160, background: "#F2F2F7", position: "relative" }}>
-              {p.imagemUrl ? (
-                <img src={p.imagemUrl} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {p.fotos?.[0] || p.imagemUrl ? (
+                <img src={p.fotos?.[0] || p.imagemUrl} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#C7C7CC", fontSize: 40 }}>📦</div>
               )}
@@ -1659,43 +1659,56 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
             {/* IMAGE UPLOAD */}
             <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Imagem do Produto</label>
-              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                <div style={{
-                  width: 100, height: 100,
-                  borderRadius: 12, border: "2px dashed #E5E5EA",
-                  background: "#F9F9F9",
-                  display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
-                  cursor: "pointer", position: "relative"
-                }}>
-                  {form.imagemUrl ? (
-                    <img src={form.imagemUrl} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    <span style={{ fontSize: 24, color: "#C7C7CC" }}>📷</span>
-                  )}
-                  <input
-                    type="file" accept="image/*"
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos do Produto</label>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {/* Gallery */}
+                {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => (
+                  <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA" }}>
+                    <img src={url} alt={`Foto ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      onClick={() => {
+                        const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
+                        setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
+                      }}
+                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
+                    >✕</button>
+                  </div>
+                ))}
+
+                {/* Add Button */}
+                <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
+                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                  <input type="file" accept="image/*"
                     onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (file) {
+                      if (e.target.files[0]) {
                         const reader = new FileReader();
-                        reader.onloadend = () => update("imagemUrl", reader.result);
-                        reader.readAsDataURL(file);
+                        reader.onloadend = () => {
+                          const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
+                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                        };
+                        reader.readAsDataURL(e.target.files[0]);
                       }
                     }}
                     style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
                   />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "#1C1C1E", marginBottom: 4 }}>Carregar Imagem</div>
-                  <div style={{ fontSize: 12, color: "#8E8E93", marginBottom: 8 }}>Clique no quadrado ao lado para escolher um arquivo do seu computador.</div>
-                  <input
-                    value={form.imagemUrl}
-                    onChange={e => update("imagemUrl", e.target.value)}
-                    placeholder="Ou cole uma URL externa aqui..."
-                    style={{ ...inputStyle, fontSize: 12 }}
-                  />
-                </div>
+              </div>
+
+              {/* URL Input */}
+              <div style={{ marginTop: 8 }}>
+                <input
+                  placeholder="Ou adicione via URL e pressione Enter..."
+                  style={{ ...inputStyle, fontSize: 12 }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.target.value) {
+                      const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), e.target.value];
+                      setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                      e.target.value = "";
+                      e.preventDefault();
+                    }
+                  }}
+                />
               </div>
             </div>
 
