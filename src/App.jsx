@@ -1497,7 +1497,7 @@ function ProductsModule() {
 function ProductFormModal({ product, onClose, onSave, materials, config }) {
   const [form, setForm] = useState(product || {
     nome: "", categoria: "Decoração", descricao: "", imagemUrl: "",
-    tempoImpressao: 60, composicao: [],
+    tempoImpressao: 0, composicao: [],
     custoBase: 0, custoEmbalagem: 0, custoFrete: 0,
     taxaMarketplace: 12, impostos: 6, lucroDesejado: 50, preco: 0
   });
