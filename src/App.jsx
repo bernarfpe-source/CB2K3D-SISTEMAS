@@ -1534,11 +1534,17 @@ function ProductsModule() {
         {filtered.map(p => (
           <div key={p.id} style={{ ...cardStyle, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <div style={{ height: 160, background: "#F2F2F7", position: "relative" }}>
-              {p.fotos?.[0] || p.imagemUrl ? (
-                <img src={p.fotos?.[0] || p.imagemUrl} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#C7C7CC", fontSize: 40 }}>📦</div>
-              )}
+              {(() => {
+                const media = p.fotos?.[0] || p.imagemUrl;
+                if (!media) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#C7C7CC", fontSize: 40 }}>📦</div>;
+
+                const isVideo = (typeof media === 'string') && (media.startsWith("data:video") || media.endsWith(".mp4") || media.endsWith(".webm") || media.endsWith(".mov"));
+
+                if (isVideo) {
+                  return <video src={media} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted loop autoPlay playsInline />;
+                }
+                return <img src={media} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
+              })()}
               <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.9)", padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
                 {p.categoria}
               </div>
@@ -1692,37 +1698,54 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
             </div>
 
-            {/* IMAGE UPLOAD */}
+            {/* IMAGE/VIDEO UPLOAD */}
             <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos do Produto</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos e Vídeos do Produto</label>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
                 {/* Gallery */}
-                {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => (
-                  <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA" }}>
-                    <img src={url} alt={`Foto ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    <button
-                      onClick={() => {
-                        const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
-                        setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
-                      }}
-                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
-                    >✕</button>
-                  </div>
-                ))}
+                {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => {
+                  const isVideo = typeof url === "string" && (url.startsWith("data:video") || url.endsWith(".mp4") || url.endsWith(".webm") || url.endsWith(".mov"));
+                  return (
+                    <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#000" }}>
+                      {isVideo ? (
+                        <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                      ) : (
+                        <img src={url} alt={`Mídia ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      )}
+
+                      <button
+                        onClick={() => {
+                          const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
+                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
+                        }}
+                        style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12, zIndex: 10 }}
+                      >✕</button>
+                      {/* Video Indicator */}
+                      {isVideo && <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>🎥 Vídeo</div>}
+                    </div>
+                  );
+                })}
 
                 {/* Add Button */}
                 <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
                   <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
-                  <input type="file" accept="image/*"
+                  <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime"
                     onChange={(e) => {
-                      if (e.target.files[0]) {
+                      const file = e.target.files[0];
+                      if (file) {
+                        // Limit video size (5MB)
+                        if (file.type.startsWith("video/") && file.size > 5 * 1024 * 1024) {
+                          alert("Vídeo muito grande! Máximo 5MB.");
+                          return;
+                        }
+
                         const reader = new FileReader();
                         reader.onloadend = () => {
                           const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
                           setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
                         };
-                        reader.readAsDataURL(e.target.files[0]);
+                        reader.readAsDataURL(file);
                       }
                     }}
                     style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
