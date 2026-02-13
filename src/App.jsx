@@ -206,10 +206,17 @@ export default function App() {
           flexShrink: 0,
         }}>
           <div style={{ padding: sidebarOpen ? "20px 16px" : "20px 12px", borderBottom: "1px solid #E5E5EA", display: "flex", alignItems: "center", gap: 10, minHeight: 68 }}>
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "transparent", border: "none", padding: 0, width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-              <div style={{ width: 40, height: 40, background: "linear-gradient(135deg, #007AFF, #0056b3)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16, boxShadow: "0 2px 10px rgba(0,122,255,0.3)" }}>
-                CB
-              </div>
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "transparent", border: "none", padding: 0, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 8, boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}>
+                <rect width="100" height="100" fill="#00589F" />
+                {/* Nozzle */}
+                <rect x="30" y="25" width="40" height="8" fill="white" />
+                <rect x="42" y="33" width="16" height="12" fill="white" />
+                <polygon points="42,45 58,45 50,55" fill="white" />
+                {/* Cube */}
+                <path d="M50 58 L35 65 L35 80 L50 88 L65 80 L65 65 Z" fill="none" stroke="white" strokeWidth="3" />
+                <path d="M50 58 L50 88 M35 65 L50 72.5 M65 65 L50 72.5 M35 80 L50 72.5 M65 80 L50 72.5" stroke="white" strokeWidth="2" />
+              </svg>
             </button>
             {sidebarOpen && (
               <div style={{ overflow: "hidden" }}>
@@ -344,8 +351,19 @@ function LoginPage({ onLogin, toast }) {
         boxShadow: "0 20px 60px rgba(0,0,0,0.05)", textAlign: "center",
         border: "1px solid #E5E5EA"
       }}>
-        <div style={{ width: 80, height: 80, margin: "0 auto 24px", background: "linear-gradient(135deg, #007AFF, #0056b3)", borderRadius: 20, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 30px rgba(0,122,255,0.3)" }}>
-          <span style={{ color: "#fff", fontSize: 32, fontWeight: 800, letterSpacing: -1 }}>CB</span>
+        <div style={{ width: 120, height: 120, margin: "0 auto 24px" }}>
+          <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 12, boxShadow: "0 10px 30px rgba(0,88,159,0.3)" }}>
+            <rect width="100" height="100" fill="#00589F" />
+            {/* Nozzle */}
+            <rect x="20" y="20" width="60" height="10" fill="white" />
+            <rect x="40" y="30" width="20" height="15" fill="white" />
+            <polygon points="40,45 60,45 50,55" fill="white" />
+            {/* Cube Wireframe */}
+            <path d="M50 58 L32 66 L32 84 L50 92 L68 84 L68 66 Z" fill="none" stroke="white" strokeWidth="3" />
+            <path d="M50 58 L50 76 M32 66 L50 76 M68 66 L50 76 M50 76 L50 92 M32 84 L50 76 M68 84 L50 76" stroke="white" strokeWidth="2" />
+            {/* Text */}
+            <text x="50" y="90" fontSize="16" fontWeight="bold" fill="white" textAnchor="middle" fontFamily="Arial, sans-serif" style={{ display: 'none' }}>CB2K3D</text>
+          </svg>
         </div>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 8px", color: "#1C1C1E", letterSpacing: -0.5 }}>CB2K3D SISTEMAS</h1>
         <p style={{ fontSize: 14, color: "#8E8E93", margin: "0 0 32px" }}>Faça login para continuar</p>
