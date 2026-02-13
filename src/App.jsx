@@ -1639,58 +1639,6 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     <Modal title={product ? "Editar Produto" : "Novo Produto"} onClose={onClose} width={900}>
       <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
 
-        {/* SECTION 1: INFO */}
-        <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PERFIL DE IMPRESSÃO</h3>
-          <div style={{ background: "#F9F9F9", padding: 16, borderRadius: 12, border: "1px solid #E5E5EA" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Altura de Camada (mm)</label>
-                <input value={form.perfil?.camada || "0.20"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), camada: e.target.value } }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Paredes (Perímetros)</label>
-                <input type="number" value={form.perfil?.paredes || 3} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), paredes: parseInt(e.target.value) } }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Preenchimento</label>
-                <input value={form.perfil?.preenchimento || "15%"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), preenchimento: e.target.value } }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>Bico (Nozzle)</label>
-                <select value={form.perfil?.bico || "0.4"} onChange={e => setForm(p => ({ ...p, perfil: { ...(p.perfil || {}), bico: e.target.value } }))} style={inputStyle}>
-                  <option value="0.2">0.2 mm</option>
-                  <option value="0.4">0.4 mm</option>
-                  <option value="0.6">0.6 mm</option>
-                  <option value="0.8">0.8 mm</option>
-                </select>
-              </div>
-            </div>
-
-            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Filamentos Usados</h4>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {(form.composicao || []).map((m, i) => {
-                const mat = materials.find(x => x.id == m.materialId);
-                const colorMap = { "Preto": "#000", "Branco": "#eee", "Cinza": "#888", "Azul": "#007AFF", "Vermelho": "#FF3B30", "Verde": "#34C759", "Amarelo": "#FFD60A", "Laranja": "#FF9500", "Roxo": "#AF52DE" };
-                const bg = colorMap[mat?.cor] || "#333";
-                const fg = ["Branco", "Amarelo"].includes(mat?.cor) ? "#000" : "#fff";
-                return (
-                  <div key={i} style={{
-                    background: bg, color: fg,
-                    padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
-                    border: "1px solid rgba(0,0,0,0.1)", display: "flex", alignItems: "center", gap: 4
-                  }}>
-                    <span style={{ textTransform: "uppercase" }}>{mat?.tipo || "PLA"}</span>
-                    <span style={{ opacity: 0.8, fontWeight: 400 }}>|</span>
-                    <span>{m.peso}g</span>
-                  </div>
-                );
-              })}
-              {(form.composicao || []).length === 0 && <span style={{ fontSize: 12, color: "#999" }}>Nenhum material adicionado.</span>}
-            </div>
-          </div>
-        </div>
-
         {/* SECTION 1: INFO (Original) */}
         <div style={{ marginBottom: 32 }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>INFORMAÇÕES BÁSICAS</h3>
