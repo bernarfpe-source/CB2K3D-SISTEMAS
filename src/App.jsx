@@ -2152,10 +2152,28 @@ function OrcamentosModule() {
 
       const updatedPedidos = prev.pedidos.map(i => i.id === item.id ? { ...i, status: "aprovado" } : i);
 
+      // FINANCE: Auto-generate Receivable on Approval
+      let newFinanceiro = { ...prev.financeiro };
+      const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${item.id}`));
+
+      if (!billExists) {
+        const clientName = prev.clientes.find(c => c.id === item.clienteId)?.nome || "Cliente";
+        newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
+          id: generateId(),
+          descricao: `Pedido #${item.id} - ${clientName}`,
+          valor: parseFloat(item.valorTotal || 0),
+          dataVencimento: new Date().toISOString().split('T')[0],
+          status: "pendente",
+          formaPagamento: item.formaPagamento || "PIX"
+        }];
+        showToast("Conta a receber gerada automaticamente!", "success");
+      }
+
       return {
         ...prev,
         materiais: newMaterials,
-        pedidos: updatedPedidos
+        pedidos: updatedPedidos,
+        financeiro: newFinanceiro
       };
     });
 
@@ -2336,6 +2354,38 @@ function PedidosModule() {
           }
         });
         if (log.length > 0) msg += ` (Estoque: ${log.join(", ")})`;
+      }
+
+      // FINANCE LOGIC: Create Receivable if moving to Consuming Status (e.g. Aprovado) 
+      let newFinanceiro = { ...prev.financeiro };
+      if (stockAction === 'deduct') {
+        const tempId = editItem ? editItem.id : null;
+        // For new items, we can't easily guess the ID here without refactoring `generateId`. 
+        // BUT, we can rely on text description or handle it for `editItem` primarily.
+        // Refactoring to ensure ID is stable:
+
+        const finalId = editItem ? editItem.id : generateId();
+        const clientName = prev.clientes.find(c => c.id === form.clienteId)?.nome || "Cliente";
+
+        const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${finalId}`));
+        if (!billExists) {
+          newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
+            id: generateId(),
+            descricao: `Pedido #${finalId} - ${clientName}`,
+            valor: parseFloat(form.valorTotal || 0),
+            dataVencimento: new Date().toISOString().split('T')[0],
+            status: "pendente",
+            formaPagamento: form.formaPagamento || "PIX"
+          }];
+          msg += " + Conta Gerada";
+        }
+
+        // Return with specified ID to ensure consistency
+        if (editItem) {
+          return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: prev.pedidos.map(i => i.id === finalId ? { ...form, id: finalId } : i) };
+        } else {
+          return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: [...prev.pedidos, { ...form, id: finalId }] };
+        }
       }
 
       if (editItem) {
@@ -2651,6 +2701,7 @@ function KanbanModule() {
 
     if (draggedItem.entity === "pedido") {
       let updatedMaterials = [...data.materiais];
+      let newFinanceiro = { ...data.financeiro, contasReceber: [...data.financeiro.contasReceber] };
       let moveMsg = `Pedido movido para ${newStatus}`;
 
       // STOCK DEDUCTION LOGIC
@@ -2702,6 +2753,23 @@ function KanbanModule() {
             }
           });
           if (deductedLog.length > 0) moveMsg += `. Estoque: ${deductedLog.join(", ")}`;
+
+          // FINANCE: Auto-generate Receivable on Kanban Drop
+          const billId = draggedItem.id;
+          const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${billId}`));
+
+          if (!billExists) {
+            const clientName = data.clientes.find(c => c.id === draggedItem.clienteId)?.nome || "Cliente";
+            newFinanceiro.contasReceber.push({
+              id: generateId(),
+              descricao: `Pedido #${billId} - ${clientName}`,
+              valor: parseFloat(draggedItem.valorTotal || 0),
+              dataVencimento: new Date().toISOString().split('T')[0],
+              status: "pendente",
+              formaPagamento: draggedItem.formaPagamento || "PIX"
+            });
+            moveMsg += " + Conta Gerada";
+          }
         }
       } else if (!isConsuming(newStatus) && isConsuming(draggedItem.status)) {
         // REFUND LOGIC: Moving from Consuming -> Non-Consuming (e.g. Producao -> Orcamento)
@@ -2749,6 +2817,7 @@ function KanbanModule() {
 
       setData(prev => ({
         ...prev,
+        financeiro: newFinanceiro,
         pedidos: prev.pedidos.map(p => p.id === draggedItem.id ? { ...p, status: newStatus } : p),
         materiais: updatedMaterials
       }));
