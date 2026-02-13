@@ -1471,8 +1471,13 @@ function ProductsModule() {
               <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 12, flex: 1, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.descricao || "Sem descrição"}</div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#34C759" }}>R$ {parseFloat(p.preco || 0).toFixed(2)}</div>
-                <div style={{ fontSize: 11, color: "#8E8E93" }}>Base: R$ {parseFloat(p.custoBase || 0).toFixed(2)}</div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#34C759" }}>R$ {parseFloat(p.preco || 0).toFixed(2)}</div>
+                  {(p.estoqueAtual > 0) && <div style={{ fontSize: 11, color: "#007AFF", fontWeight: 600, marginTop: 2 }}>Em Estoque: {p.estoqueAtual} un</div>}
+                </div>
+                <div style={{ fontSize: 11, color: "#8E8E93", textAlign: "right" }}>
+                  <div>Base: R$ {parseFloat(p.custoBase || 0).toFixed(2)}</div>
+                </div>
               </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #F2F2F7" }}>
@@ -1516,7 +1521,7 @@ function ProductsModule() {
 
 function ProductFormModal({ product, onClose, onSave, materials, config }) {
   const [form, setForm] = useState(product || {
-    nome: "", categoria: "Decoração", descricao: "", imagemUrl: "",
+    nome: "", categoria: "Decoração", estoqueAtual: 0, descricao: "", imagemUrl: "",
     tempoImpressao: 0, composicao: [],
     custoBase: 0, custoEmbalagem: 0, custoFrete: 0,
     taxaMarketplace: 12, impostos: 6, lucroDesejado: 50, preco: 0
@@ -1596,7 +1601,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               </select>
             </div>
             <div>
-              {/* Placeholder for layout balance */}
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Estoque Pronta Entrega</label>
+              <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
             </div>
 
             {/* IMAGE UPLOAD */}
