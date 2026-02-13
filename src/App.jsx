@@ -206,8 +206,10 @@ export default function App() {
           flexShrink: 0,
         }}>
           <div style={{ padding: sidebarOpen ? "20px 16px" : "20px 12px", borderBottom: "1px solid #E5E5EA", display: "flex", alignItems: "center", gap: 10, minHeight: 68 }}>
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "#007AFF", border: "none", borderRadius: 8, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 18, flexShrink: 0, color: "#fff" }}>
-              
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "transparent", border: "none", padding: 0, width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <div style={{ width: 40, height: 40, background: "linear-gradient(135deg, #007AFF, #0056b3)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16, boxShadow: "0 2px 10px rgba(0,122,255,0.3)" }}>
+                CB
+              </div>
             </button>
             {sidebarOpen && (
               <div style={{ overflow: "hidden" }}>
@@ -342,8 +344,8 @@ function LoginPage({ onLogin, toast }) {
         boxShadow: "0 20px 60px rgba(0,0,0,0.05)", textAlign: "center",
         border: "1px solid #E5E5EA"
       }}>
-        <div style={{ width: 64, height: 64, borderRadius: 18, background: "#007AFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, color: "#fff", margin: "0 auto 24px" }}>
-          
+        <div style={{ width: 80, height: 80, margin: "0 auto 24px", background: "linear-gradient(135deg, #007AFF, #0056b3)", borderRadius: 20, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 30px rgba(0,122,255,0.3)" }}>
+          <span style={{ color: "#fff", fontSize: 32, fontWeight: 800, letterSpacing: -1 }}>CB</span>
         </div>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 8px", color: "#1C1C1E", letterSpacing: -0.5 }}>CB2K3D SISTEMAS</h1>
         <p style={{ fontSize: 14, color: "#8E8E93", margin: "0 0 32px" }}>Faça login para continuar</p>
