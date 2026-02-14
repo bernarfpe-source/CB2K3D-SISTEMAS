@@ -1639,6 +1639,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     tempoImpressao: 0, composicao: [], partes: [],
     // Print Profile Config
     perfil: { impressora: "A1", camada: "0.20", paredes: 3, preenchimento: "15%", bico: "0.4" },
+    activeCosts: { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true },
     custoBase: 0, custoEmbalagem: 0, custoFrete: 0,
     taxaMarketplace: 12, impostos: 6, lucroDesejado: 50, preco: 0
   });
@@ -1672,7 +1673,16 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
   const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
 
-  const calculatedBase = parseFloat((fixedCost + custoMaterial + custoEnergia).toFixed(2));
+  // Calculate Base based on ACTIVE costs
+  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true };
+  const calculatedBase = parseFloat((
+    (active.maoDeObra ? custoMaoDeObra : 0) +
+    (active.depreciacao ? custoDepreciacao : 0) +
+    (active.manutencao ? custoManutencao : 0) +
+    (active.material ? custoMaterial : 0) +
+    (active.energia ? custoEnergia : 0)
+  ).toFixed(2));
+
   const totalCost = calculatedBase + (form.custoEmbalagem || 0) + (form.custoFrete || 0);
 
   // Auto-update form state if calculations diverge (to save correct values)
@@ -1687,15 +1697,15 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       suggestedPrice = totalCost * (1 + profitPercent + feePercent);
     }
 
-    // Only update if changed > 0.01 to avoid loops AND if not in manual mode
-    if (!form.precoManual && (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01)) {
+    // Only update if changed > 0.01 to avoid loops
+    if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
       setForm(prev => ({
         ...prev,
         custoBase: calculatedBase,
         preco: parseFloat(suggestedPrice.toFixed(2))
       }));
     }
-  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.precoManual]);
+  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco]);
 
   // ENABLE PASTE (Ctrl+V) for Images
   useEffect(() => {
@@ -1944,28 +1954,25 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
-              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos</h4>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
 
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" }}>
-                <span>Material (Filamento)</span>
-                <span>R$ {custoMaterial.toFixed(2)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" }}>
-                <span>Energia Elétrica</span>
-                <span>R$ {custoEnergia.toFixed(2)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" }}>
-                <span>Depreciação Máquina</span>
-                <span>R$ {custoDepreciacao.toFixed(2)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" }}>
-                <span>Manutenção Prevista</span>
-                <span>R$ {custoManutencao.toFixed(2)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" }}>
-                <span>Mão de Obra (Técnica)</span>
-                <span>R$ {custoMaoDeObra.toFixed(2)}</span>
-              </div>
+              {[
+                { key: "material", label: "Material (Filamento)", val: custoMaterial },
+                { key: "energia", label: "Energia Elétrica", val: custoEnergia },
+                { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
+                { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
+                { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra }
+              ].map(item => (
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
+                    <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
+                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
+                    }} />
+                    {item.label}
+                  </label>
+                  <span style={{ textDecoration: (form.activeCosts?.[item.key] !== false) ? "none" : "line-through" }}>R$ {item.val.toFixed(2)}</span>
+                </div>
+              ))}
 
               <div style={{ height: 1, background: "#D1D1D6", margin: "10px 0" }} />
 
@@ -1991,14 +1998,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
             <div>
               <div style={{ marginBottom: 12 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 500, color: "#1C1C1E", marginBottom: 16 }}>
-                  <input type="checkbox" checked={form.precoManual || false} onChange={e => {
-                    setForm(prev => ({ ...prev, precoManual: e.target.checked }));
-                  }} />
-                  Definir Preço Manualmente (Ignorar Custos)
-                </label>
-
-                <label style={{ fontSize: 12, color: "#8E8E93", opacity: form.precoManual ? 0.5 : 1 }}>Lucro Desejado (%)</label>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
                 <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
               </div>
 
