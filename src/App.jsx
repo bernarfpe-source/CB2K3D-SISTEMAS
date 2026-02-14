@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useMemo, createContext, useContext, useRef } from "react";
 
 // ============================================================
 // CONTEXT & DATA STORE
@@ -1661,6 +1661,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     lucroDesejado: 50, preco: 0
   });
 
+  const pasteTargetRef = useRef("main");
+
   // Removed activeTab state
 
   // Helper to update form
@@ -1730,6 +1732,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
 
   // ENABLE PASTE (Ctrl+V) for Images
+  // ENABLE PASTE (Ctrl+V) for Images
   useEffect(() => {
     const handlePaste = (e) => {
       const items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -1738,11 +1741,17 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           const blob = items[i].getAsFile();
           const reader = new FileReader();
           reader.onload = (event) => {
-            setForm(prev => {
-              const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), event.target.result];
-              return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
-            });
-            // alert("Imagem colada da área de transferência!"); // Optional feedback
+            const result = event.target.result;
+            if (pasteTargetRef.current === "tech") {
+              setForm(prev => ({ ...prev, fotosTecnicas: [...(prev.fotosTecnicas || []), result] }));
+              showToast("Print técnico adicionado!", "success");
+            } else {
+              setForm(prev => {
+                const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), result];
+                return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
+              });
+              showToast("Imagem adicionada à galeria!", "success");
+            }
           };
           reader.readAsDataURL(blob);
         }
@@ -1849,7 +1858,11 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
             </div>
 
             {/* TECHNICAL SPECS IMAGES */}
-            <div style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6" }}>
+            <div
+              onMouseEnter={() => pasteTargetRef.current = "tech"}
+              onMouseLeave={() => pasteTargetRef.current = "main"}
+              style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6", transition: "border-color 0.2s" }}
+            >
               <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                 📄 Documentação Técnica / Prints do Fatiador
               </label>
