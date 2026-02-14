@@ -1687,15 +1687,15 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       suggestedPrice = totalCost * (1 + profitPercent + feePercent);
     }
 
-    // Only update if changed > 0.01 to avoid loops
-    if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
+    // Only update if changed > 0.01 to avoid loops AND if not in manual mode
+    if (!form.precoManual && (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01)) {
       setForm(prev => ({
         ...prev,
         custoBase: calculatedBase,
         preco: parseFloat(suggestedPrice.toFixed(2))
       }));
     }
-  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco]);
+  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.precoManual]);
 
   // ENABLE PASTE (Ctrl+V) for Images
   useEffect(() => {
@@ -1991,7 +1991,14 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
             <div>
               <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 500, color: "#1C1C1E", marginBottom: 16 }}>
+                  <input type="checkbox" checked={form.precoManual || false} onChange={e => {
+                    setForm(prev => ({ ...prev, precoManual: e.target.checked }));
+                  }} />
+                  Definir Preço Manualmente (Ignorar Custos)
+                </label>
+
+                <label style={{ fontSize: 12, color: "#8E8E93", opacity: form.precoManual ? 0.5 : 1 }}>Lucro Desejado (%)</label>
                 <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
               </div>
 
