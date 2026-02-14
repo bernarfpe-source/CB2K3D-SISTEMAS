@@ -1678,7 +1678,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
 
   // Calculate Base based on ACTIVE costs
-  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true };
+  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
   const calculatedBase = parseFloat((
     (active.maoDeObra ? custoMaoDeObra : 0) +
     (active.depreciacao ? custoDepreciacao : 0) +
@@ -1693,7 +1693,10 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
   // Auto-update form state if calculations diverge (to save correct values)
   useEffect(() => {
-    const feePercent = ((form.taxaMarketplace || 0) + (form.impostos || 0)) / 100;
+    const feePercent = (
+      ((active.taxaMarketplace !== false) ? (form.taxaMarketplace || 0) : 0) +
+      ((active.impostos !== false) ? (form.impostos || 0) : 0)
+    ) / 100;
     const profitPercent = (form.lucroDesejado || 0) / 100;
 
     let suggestedPrice = 0;
@@ -1711,7 +1714,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         preco: parseFloat(suggestedPrice.toFixed(2))
       }));
     }
-  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco]);
+  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
 
   // ENABLE PASTE (Ctrl+V) for Images
   useEffect(() => {
@@ -2013,6 +2016,32 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
             </div>
 
             <div>
+              <div style={{ marginBottom: 20, padding: 16, background: "#fff", borderRadius: 8, border: "1px solid #E5E5EA" }}>
+                <h5 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 12px", color: "#8E8E93", letterSpacing: 0.5, textTransform: "uppercase" }}>TAXAS & VENDAS</h5>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.impostos !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={active.impostos !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), impostos: e.target.checked } }))} />
+                    Impostos
+                  </label>
+                  <div style={{ position: "relative", width: 80 }}>
+                    <input type="number" value={form.impostos || 0} onChange={e => update("impostos", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.impostos !== false) ? "#000" : "#C7C7CC", textDecoration: (active.impostos !== false) ? "none" : "line-through" }} />
+                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.taxaMarketplace !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={active.taxaMarketplace !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), taxaMarketplace: e.target.checked } }))} />
+                    Marketplace
+                  </label>
+                  <div style={{ position: "relative", width: 80 }}>
+                    <input type="number" value={form.taxaMarketplace || 0} onChange={e => update("taxaMarketplace", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.taxaMarketplace !== false) ? "#000" : "#C7C7CC", textDecoration: (active.taxaMarketplace !== false) ? "none" : "line-through" }} />
+                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                  </div>
+                </div>
+              </div>
+
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
                 <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
