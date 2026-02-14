@@ -1640,8 +1640,12 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     // Print Profile Config
     perfil: { impressora: "A1", camada: "0.20", paredes: 3, preenchimento: "15%", bico: "0.4" },
     activeCosts: { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true },
-    custoBase: 0, custoEmbalagem: 0, custoFrete: 0,
-    taxaMarketplace: 12, impostos: 6, lucroDesejado: 50, preco: 0
+    custoBase: 0,
+    custoEmbalagem: config?.logistica?.custoEmbalagemPadrao || 0,
+    custoFrete: config?.logistica?.custoFretePadrao || 0,
+    taxaMarketplace: config?.vendas?.taxaMarketplacePercent || 0,
+    impostos: config?.vendas?.impostosPercent || 0,
+    lucroDesejado: 50, preco: 0
   });
 
   // Removed activeTab state
