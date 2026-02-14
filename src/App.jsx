@@ -1848,6 +1848,53 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               </div>
             </div>
 
+            {/* TECHNICAL SPECS IMAGES */}
+            <div style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6" }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                📄 Documentação Técnica / Prints do Fatiador
+              </label>
+              <p style={{ fontSize: 11, color: "#8E8E93", marginBottom: 12 }}>
+                Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
+                <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
+              </p>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {/* Tech Gallery */}
+                {(form.fotosTecnicas || []).map((url, idx) => (
+                  <div key={idx} style={{ position: "relative", width: 100, height: 100, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#fff", cursor: "pointer" }} onClick={() => window.open(url, "_blank")}>
+                    <img src={url} alt={`Doc ${idx}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const newFotos = (form.fotosTecnicas || []).filter((_, i) => i !== idx);
+                        setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                      }}
+                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
+                    >✕</button>
+                  </div>
+                ))}
+
+                {/* Add Button */}
+                <div style={{ width: 100, height: 100, borderRadius: 8, border: "2px dashed #C7C7CC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#fff" }}>
+                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                  <input type="file" accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const newFotos = [...(form.fotosTecnicas || []), reader.result];
+                          setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Descrição</label>
               <textarea value={form.descricao} onChange={e => update("descricao", e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
