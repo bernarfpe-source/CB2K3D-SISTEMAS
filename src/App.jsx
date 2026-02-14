@@ -1455,6 +1455,20 @@ function ProductCard({ p, onEdit, onProduce, onDelete }) {
           {p.categoria}
         </div>
 
+        {/* Navigation Arrows */}
+        {mediaList.length > 1 && (
+          <>
+            <button
+              onClick={(e) => { e.stopPropagation(); setIdx(prev => (prev === 0 ? mediaList.length - 1 : prev - 1)); }}
+              style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 20, fontSize: 16, paddingBottom: 2 }}
+            >‹</button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setIdx(prev => (prev === mediaList.length - 1 ? 0 : prev + 1)); }}
+              style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 20, fontSize: 16, paddingBottom: 2 }}
+            >›</button>
+          </>
+        )}
+
         {/* Navigation Dots */}
         {mediaList.length > 1 && (
           <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 6, zIndex: 10 }}>
@@ -1462,10 +1476,9 @@ function ProductCard({ p, onEdit, onProduce, onDelete }) {
               <div key={i}
                 onClick={(e) => { e.stopPropagation(); setIdx(i); }}
                 style={{
-                  width: 8, height: 8, borderRadius: "50%",
-                  background: i === idx ? "#007AFF" : "rgba(255,255,255,0.6)",
-                  cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
-                  border: "1px solid rgba(0,0,0,0.1)"
+                  width: 6, height: 6, borderRadius: "50%",
+                  background: i === idx ? "#007AFF" : "rgba(255,255,255,0.8)",
+                  cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.3)"
                 }}
               />
             ))}
