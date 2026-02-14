@@ -1678,7 +1678,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
 
   // Calculate Base based on ACTIVE costs
-  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true };
+  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true };
   const calculatedBase = parseFloat((
     (active.maoDeObra ? custoMaoDeObra : 0) +
     (active.depreciacao ? custoDepreciacao : 0) +
@@ -1687,7 +1687,9 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     (active.energia ? custoEnergia : 0)
   ).toFixed(2));
 
-  const totalCost = calculatedBase + (form.custoEmbalagem || 0) + (form.custoFrete || 0);
+  const totalCost = calculatedBase +
+    ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
+    ((active.frete !== false) ? (form.custoFrete || 0) : 0);
 
   // Auto-update form state if calculations diverge (to save correct values)
   useEffect(() => {
@@ -1986,12 +1988,22 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               </div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <span>Embalagem</span>
-                <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right" }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                  <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
+                  }} />
+                  Embalagem
+                </label>
+                <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.embalagem !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.embalagem !== false) ? "none" : "line-through" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <span>Frete / Logística</span>
-                <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right" }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                  <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
+                  }} />
+                  Frete / Logística
+                </label>
+                <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.frete !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.frete !== false) ? "none" : "line-through" }} />
               </div>
 
               <div style={{ borderTop: "1px solid #D1D1D6", margin: "12px 0", paddingTop: 12, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: "#000" }}>
