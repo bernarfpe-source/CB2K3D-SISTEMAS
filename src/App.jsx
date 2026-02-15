@@ -1943,110 +1943,124 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       // 2. EXTRACT FILAMENTS / WEIGHTS
       const inputs = [];
       const rawWeights = [];
+      let detectedFilaments = [];
 
-      // Split by common delimiters to handle tabular data better
+      // STRATEGY A: LINE SCANNING (High Precision for Tables)
+      // Look for lines that have structure like "1 ... 50g" or "Filament 1 ... 50g"
+      const lines = text.split('\n');
+      lines.forEach(line => {
+        const l = line.trim();
+        // Check for ID at start (1, 2, 3...)
+        const idMatch = l.match(/^(\d+)[.\s)]/);
+        // Check for weight at end or middle
+        const weightMatch = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
+
+        if (idMatch && weightMatch.length > 0) {
+          const id = parseInt(idMatch[1]);
+          if (id > 0 && id < 20) { // Reasonable ID range
+            // Use the LAST weight found in the line (usually the total for that row)
+            const lastW = weightMatch[weightMatch.length - 1];
+            let val = parseFloat(lastW[1].replace(',', '.'));
+            if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+
+            if (val > 0) {
+              detectedFilaments.push({ id, weight: val });
+            }
+          }
+        }
+      });
+
+      // Collect raw weights for fallback
       const tokens = text.split(/[\n\t|]/);
-
       tokens.forEach(token => {
         const t = token.trim();
-        // Regex allows: "12.5g", "12,5g", "12g", "12m" (meters often confused, but we look for g)
-        // Also support "12.5 g" with space
         const matches = t.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi);
         for (const m of matches) {
           let val = parseFloat(m[1].replace(',', '.'));
           if (m[2].toLowerCase() === 'kg') val *= 1000;
-          if (!isNaN(val) && val > 0 && val < 50000) rawWeights.push(val); // sanity check < 50kg
+          if (!isNaN(val) && val > 0 && val < 50000) rawWeights.push(val);
         }
       });
 
+      console.log("Line Scan Results:", detectedFilaments);
       console.log("Raw Weights Found:", rawWeights);
 
-      if (rawWeights.length === 0) {
-        log.push("Erro: Nenhum peso (g) encontrado no texto.");
-      }
-
-      // -- STEP 2: GLOBAL SCALING NORMALIZATION --
-      // Check if weights effectively make sense for the print time.
-      const maxRaw = Math.max(...rawWeights, 0);
-      let scalingFactor = 1;
-
-      if (updates.tempoImpressao && updates.tempoImpressao > 0 && maxRaw > 0) {
-        // Assume MaxRaw is the Total Weight. Check Flow Rate.
-        const gPerMin = maxRaw / updates.tempoImpressao;
-        if (gPerMin > 5.0) scalingFactor = 100; // >300g/hour is unlikely for standard printers
-        else if (gPerMin > 50.0) scalingFactor = 1000;
-
-        if (scalingFactor > 1) log.push(`Ajuste de Escala: dividindo pesos por ${scalingFactor} (detectado erro de unidade)`);
-      }
-
-      let cleanWeights = rawWeights.map(w => parseFloat((w / scalingFactor).toFixed(2))).sort((a, b) => b - a);
-
-      // Filter out tiny noise (e.g. "0 g" or "0.01 g")
-      cleanWeights = cleanWeights.filter(w => w > 0.1);
-
-      // -- STEP 3: FIND GRAND TOTAL & COMPONENTS --
-      const grandTotal = cleanWeights[0] || 0; // Largest value is assumed to be Total
-
-      // If we only have 1 weight, that's just the total
       let finalWeights = [];
-      const candidates = cleanWeights.slice(1); // Determine sub-components
+      let grandTotal = 0;
 
-      if (candidates.length === 0 && grandTotal > 0) {
-        finalWeights = [grandTotal];
+      // DECISION LOGIC: Use Line Scan if available, otherwise Bag Match
+      if (detectedFilaments.length > 0) {
+        log.push(`Modo Tabela: ${detectedFilaments.length} filamentos encontrados por linha.`);
+        finalWeights = detectedFilaments.map(f => f.weight);
+        // Calculate total from parts
+        grandTotal = finalWeights.reduce((a, b) => a + b, 0);
+
+        // Double check if there is a much larger "Total" listed elsewhere?
+        const maxRaw = Math.max(...rawWeights, 0);
+        if (maxRaw > grandTotal * 1.5) {
+          log.push(`Aviso: Existe um valor muito maior (${maxRaw}g) que a soma das partes (${grandTotal}g). Usando partes individuais.`);
+          // We trust the parts more than the total in this case, but let's update totalWeight to be safe
+          // grandTotal = maxRaw; // Optional: Override total? No, keep sum of parts.
+        }
       } else {
-        // SUBSET SUM STRATEGY
-        // Try to find which numbers sum up to GrandTotal
-        let currentSum = 0;
-        let subset = [];
-        const tolerance = 2.0; // 2g tolerance
-
-        for (const w of candidates) {
-          // Greedy approach: take largest that fits
-          if (currentSum + w <= grandTotal + tolerance) {
-            subset.push(w);
-            currentSum += w;
-          }
+        // STRATEGY B: BAG OF WEIGHTS (Fallback)
+        if (rawWeights.length === 0) {
+          log.push("Erro: Nenhum peso (g) encontrado no texto.");
         }
 
-        // If the sum is close enough, use it
-        if (Math.abs(grandTotal - currentSum) <= tolerance && subset.length > 0) {
-          console.log("Subset Sum Success! Found components:", subset);
-          finalWeights = subset;
-          log.push("Estrutura detectada: " + subset.length + " filamentos somando " + currentSum.toFixed(1) + "g");
+        const maxRaw = Math.max(...rawWeights, 0);
+        let scalingFactor = 1;
+
+        if (updates.tempoImpressao && updates.tempoImpressao > 0 && maxRaw > 0) {
+          const gPerMin = maxRaw / updates.tempoImpressao;
+          if (gPerMin > 5.0) scalingFactor = 100;
+          else if (gPerMin > 50.0) scalingFactor = 1000;
+
+          if (scalingFactor > 1) log.push(`Ajuste de Escala: dividindo pesos por ${scalingFactor} (detectado erro de unidade)`);
+        }
+
+        let cleanWeights = rawWeights.map(w => parseFloat((w / scalingFactor).toFixed(2))).sort((a, b) => b - a);
+        cleanWeights = cleanWeights.filter(w => w > 0.1);
+
+        grandTotal = cleanWeights[0] || 0;
+        const candidates = cleanWeights.slice(1);
+
+        if (candidates.length === 0 && grandTotal > 0) {
+          finalWeights = [grandTotal];
         } else {
-          console.warn("Subset Sum missed. Fallback Mode.");
+          // Subset Sum Logic...
+          let currentSum = 0;
+          let subset = [];
+          const tolerance = 2.0;
 
-          // Fallback: If we can't find a sum, maybe the "Grand Total" wasn't actually a total but just another part?
-          // Or maybe OCR missed some numbers.
-          // Let's look for "ID" signals (1., 2.)
-          let likelyCount = 0;
-          // Use original lines for this check
-          text.split('\n').forEach(l => {
-            if (l.match(/^\s*\d+[\s.]+/)) likelyCount++;
-          });
-          if (likelyCount < 1) likelyCount = 1;
+          for (const w of candidates) {
+            if (currentSum + w <= grandTotal + tolerance) {
+              subset.push(w);
+              currentSum += w;
+            }
+          }
 
-          // Just take top N weights? 
-          // Better: Just return the GrandTotal as one piece if we can't decompose it.
-          // Or if we have obvious multiple large numbers, return them?
-
-          if (candidates.length >= 1) {
-            // Return the Grand Total + note
-            finalWeights = [grandTotal];
-            log.push("Aviso: Soma dos componentes não bate. Usando peso total apenas.");
+          if (Math.abs(grandTotal - currentSum) <= tolerance && subset.length > 0) {
+            finalWeights = subset;
+            log.push("Estrutura detectada (Soma): " + subset.length + " itens.");
           } else {
-            finalWeights = [grandTotal];
+            // Final Hail Mary: If we have multiple large numbers, maybe they are just distinct parts?
+            // e.g. "50g" "30g" (Total missed).
+            // BUT usually row match detects this.
+            // Fallback to Main Total.
+            if (candidates.length >= 1) {
+              finalWeights = [grandTotal];
+              log.push("Aviso: Soma não bate. Usando apenas peso total.");
+            } else {
+              finalWeights = [grandTotal];
+            }
           }
         }
       }
 
-
-
-
-      updates.totalWeight = grandTotal;
+      updates.totalWeight = parseFloat(grandTotal.toFixed(2));
 
       const fillets = [];
-      // Map to Fillets object for existing logic compatibility
       fillets.push(...finalWeights.map((w, i) => ({
         id: i + 1,
         weight: w,
