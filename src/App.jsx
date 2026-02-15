@@ -2037,29 +2037,30 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       })));
 
       // UPDATE FORM
+      const defaultMaterialId = (materials && materials.length > 0) ? materials[0].id : "";
+
       if (fillets.length > 0) {
         const newPartes = fillets.map((f, i) => ({
           id: Date.now() + i,
           nome: f.nome,
-          materialId: "",
+          materialId: defaultMaterialId, // Auto-select first material
           peso: f.weight,
-          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao / fillets.length) : 0,
+          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.weight / grandTotal)) : 0,
           foto: ""
         }));
 
-        // Sync composition
         const newComp = newPartes.map(p => ({
-          materialId: "", peso: p.peso, tipo: "", cor: ""
+          materialId: defaultMaterialId, peso: p.peso, tipo: "", cor: ""
         }));
 
         updates.partes = newPartes;
         updates.composicao = newComp;
-        log.push(`Detectados ${fillets.length} filamentos: ${fillets.map(f => f.weight + 'g').join(', ')}`);
+        log.push(`Filamentos: ${fillets.map(f => f.weight + 'g').join(', ')}`);
 
       } else if (updates.totalWeight > 0) {
         // Just update the first part or create one
-        const currentPart = (form.partes && form.partes[0]) || { id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0 };
-        const newPart = { ...currentPart, peso: updates.totalWeight, tempo: updates.tempoImpressao || currentPart.tempo };
+        const currentPart = (form.partes && form.partes[0]) || { id: Date.now(), nome: "Parte Principal", materialId: defaultMaterialId, peso: 0, tempo: 0 };
+        const newPart = { ...currentPart, peso: updates.totalWeight, tempo: updates.tempoImpressao || currentPart.tempo, materialId: currentPart.materialId || defaultMaterialId };
 
         updates.partes = [newPart];
         updates.composicao = [{ materialId: newPart.materialId, peso: updates.totalWeight, tipo: "", cor: "" }];
