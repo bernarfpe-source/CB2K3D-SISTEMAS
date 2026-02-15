@@ -1970,93 +1970,155 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       }
 
       // 2. EXTRACT FILAMENTS / WEIGHTS
-      // STRATEGY: BAG OF WEIGHTS (Robust to bad formatting)
+      let detectedFilaments = [];
       const rawWeights = [];
-      const tokens = text.split(/[\s|]+/); // Split by any whitespace or separator
 
-      tokens.forEach(t => {
-        // Regex allows: "12.5g", "12,5g", "12g"
+      // STRATEGY A: LINE SCANNING (High Precision for Tables)
+      // Enhanced for Bambu/Orca: Look for lines with measuring units
+      const lines = text.split('\n');
+      lines.forEach((line, index) => {
+        const l = line.trim();
+
+        // 1. Try finding ID at start
+        let idMatch = l.match(/^(\d+)[.\s)]/);
+        let id = idMatch ? parseInt(idMatch[1]) : null;
+
+        // 2. Find all weights in this line
+        // Regex handles: 10.5g, 10,5g, 10g, 10 g
+        const weightMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
+
+        // Bambu Strategy: The line might just be "4,27 g 10,13 g 1,48 g 15,88 g" without ID
+        // If we have >= 2 weights in a line, it's likely a row. The LAST one is the row total.
+        if (weightMatches.length >= 2) {
+          const lastW = weightMatches[weightMatches.length - 1];
+          let val = parseFloat(lastW[1].replace(',', '.'));
+          if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+
+          // Smart ID: If no ID found at start, try to infer from previous line or sequence
+          if (!id) {
+            // Check previous line for a lone number that could be ID
+            if (index > 0) {
+              const prevLine = lines[index - 1].trim();
+              const prevIdMatch = prevLine.match(/^(\d+)[.\s]*$/); // Just a number
+              if (prevIdMatch) id = parseInt(prevIdMatch[1]);
+              else {
+                // Or prev line has "Measurement in meters" and starts with ID like in user screenshot
+                // "2 1,41 m ..."
+                const prevLineMeters = prevLine.match(/^(\d+).*?m/);
+                if (prevLineMeters) id = parseInt(prevLineMeters[1]);
+              }
+            }
+          }
+
+          // If still no ID, use the 'detectedFilaments.length + 1' as fallback later
+          // For now, accept it if it looks valid
+          if (val > 0) {
+            // heuristic: if we already have this ID, don't overwrite unless confidence is higher? 
+            // Simple approach: Sequence
+            const effectiveId = id || (detectedFilaments.length + 1);
+            detectedFilaments.push({ id: effectiveId, weight: val, rawLine: l });
+          }
+        }
+        // Standard Strategy: ID + Single Weight (e.g. "1 ... 50g")
+        else if (id && weightMatches.length === 1) {
+          const m = weightMatches[0];
+          let val = parseFloat(m[1].replace(',', '.'));
+          if (m[2].toLowerCase() === 'kg') val *= 1000;
+          if (val > 0) {
+            detectedFilaments.push({ id, weight: val, rawLine: l });
+          }
+        }
+      });
+
+      // Collect raw weights for fallback
+      const tokens = text.split(/[\n\t|]/);
+      tokens.forEach(token => {
+        const t = token.trim();
         const matches = t.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi);
         for (const m of matches) {
           let val = parseFloat(m[1].replace(',', '.'));
           if (m[2].toLowerCase() === 'kg') val *= 1000;
-          if (!isNaN(val) && val > 0.5 && val < 50000) rawWeights.push(val); // Ignore < 0.5g (noise)
+          if (!isNaN(val) && val > 0 && val < 50000) rawWeights.push(val);
         }
       });
-      console.log("All Weights Found:", rawWeights);
+
+      console.log("Line Scan Results:", detectedFilaments);
+      console.log("Raw Weights Found:", rawWeights);
 
       let finalWeights = [];
       let grandTotal = 0;
 
-      // 1. Identification Phase
-      // The largest number is almost certainly the Grand Total (or Cumulative Total)
-      // Sort descending
-      const sortedWeights = [...rawWeights].sort((a, b) => b - a);
+      // Or reads "119.06" as "119.06" and "19.06".
+      // Let's filter unique values? Or keep duplicates (maybe 2 filaments have same weight)?
+      // Let's keep distinct instances for now.
 
-      if (sortedWeights.length > 0) {
-        grandTotal = sortedWeights[0]; // Largest is Total
-        log.push(`Total Detectado (Maior valor): ${grandTotal}g`);
+      // Try Subset Sum First (Most accurate)
+      let currentSum = 0;
+      let subset = [];
+      const tolerance = grandTotal * 0.05; // 5% tolerance for bad OCR
 
-        // 2. Component Phase
-        // Identifying parts: 
-        // A. If we have a math match (Sum of X, Y, Z approx Total) -> Perfect
-        // B. If not, exclude values that are clearly "Sub-totals" or "Duplicates" of the Total?
-
-        const candidates = sortedWeights.slice(1); // Detect components from the rest
-
-        // Filter candidates: 
-        // Sometimes OCR reads the same number twice (e.g. in a summary list and a detail list)
-        // Or reads "119.06" as "119.06" and "19.06".
-        // Let's filter unique values? Or keep duplicates (maybe 2 filaments have same weight)?
-        // Let's keep distinct instances for now.
-
-        // Try Subset Sum First (Most accurate)
-        let currentSum = 0;
-        let subset = [];
-        const tolerance = grandTotal * 0.05; // 5% tolerance for bad OCR
-
-        // Heuristic: Pure "Bag" - just take numbers that add up to Total
-        for (const w of candidates) {
-          if (currentSum + w <= grandTotal + tolerance) {
-            subset.push(w);
-            currentSum += w;
-          }
+      // Heuristic: Pure "Bag" - just take numbers that add up to Total
+      for (const w of candidates) {
+        if (currentSum + w <= grandTotal + tolerance) {
+          subset.push(w);
+          currentSum += w;
         }
+      }
 
-        if (Math.abs(currentSum - grandTotal) <= tolerance && subset.length > 0) {
-          finalWeights = subset;
-          log.push(`Componentes identificados pela soma: ${subset.join(', ')}`);
-        } else {
-          // Fallback: The OCR might have missed the "Total" line completely, and detected pieces are just pieces.
-          // OR The "Total" is correct, but pieces are missing.
-
-          // New Strategy: "The Big Filter"
-          // If we have multiple numbers, and they are significantly smaller than the max, assume they are filaments.
-          // e.g. [119, 64, 45, 9, 3] -> 119 is Total. 64+45+9 approx 119.
-
-          // Let's just return ALL candidates that are likely components (e.g. < 90% of Total)
-          // This might include "garbage" numbers but better to let user delete than type.
-          const likelyComponents = candidates.filter(w => w < grandTotal * 0.95);
-
-          if (likelyComponents.length > 0) {
-            finalWeights = likelyComponents;
-            log.push(`Aviso: Soma não exata. Trazendo todos os valores menores encontrados (${likelyComponents.length} itens).`);
-          } else {
-            // No components found? Just one big block?
-            finalWeights = [grandTotal];
-          }
-        }
+      if (Math.abs(currentSum - grandTotal) <= tolerance && subset.length > 0) {
+        finalWeights = subset;
+        log.push(`Componentes identificados pela soma: ${subset.join(', ')}`);
       } else {
-        log.push("Erro: Nenhum peso encontrado.");
+        // Fallback: The OCR might have missed the "Total" line completely, and detected pieces are just pieces.
+        // OR The "Total" is correct, but pieces are missing.
+
+        // New Strategy: "The Big Filter"
+        // If we have multiple numbers, and they are significantly smaller than the max, assume they are filaments.
+        // e.g. [119, 64, 45, 9, 3] -> 119 is Total. 64+45+9 approx 119.
+
+        // Let's just return ALL candidates that are likely components (e.g. < 90% of Total)
+      } else {
+        // STRATEGY B: BAG OF WEIGHTS (Fallback)
+        if (rawWeights.length > 0) {
+          const sortedWeights = [...rawWeights].sort((a, b) => b - a);
+          grandTotal = sortedWeights[0];
+
+          // Assume other weights are components if they sum up?
+          // Or just take all smaller weights as potential filaments?
+          // Logic: If we have multiple weights, and the sum of (all - max) approx max, then those are the parts.
+          const candidates = sortedWeights.slice(1);
+          const sumCandidates = candidates.reduce((a, b) => a + b, 0);
+
+          if (Math.abs(sumCandidates - grandTotal) < grandTotal * 0.1) {
+            finalWeights = candidates;
+            log.push("Modo Soma: Pesos menores somam o total.");
+          } else {
+            // Return the big total, and maybe the next largest as a single part?
+            // Or if there are clearly defined "filament" sized weights (e.g. 50g, 20g)
+            // Let's just return the Total and let user split if needed.
+            // UNLESS we see multiple distinct values.
+            if (candidates.length > 0) {
+              // Filter out tiny values (noise)
+              const realParts = candidates.filter(c => c > 1);
+              if (realParts.length > 0) {
+                finalWeights = realParts; // Show all parts found
+                log.push("Modo Lista: Mostrando todos os pesos encontrados.");
+              } else {
+                finalWeights = [grandTotal];
+              }
+            } else {
+              finalWeights = [grandTotal];
+            }
+          }
+        } else {
+          log.push("Erro: Nenhum peso encontrado.");
+        }
       }
 
       updates.totalWeight = parseFloat(grandTotal.toFixed(2));
 
       const fillets = [];
-      // If we found specific components, use them. 
-      // If we only found the Grand Total (finalWeights has 1 item and it matches grandTotal), treat as 1 filament.
-      if (finalWeights.length === 0 && grandTotal > 0) finalWeights = [grandTotal];
-
+      // Populate fillets from finalWeights
       fillets.push(...finalWeights.map((w, i) => ({
         id: i + 1,
         weight: w,
