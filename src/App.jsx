@@ -1989,7 +1989,16 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   const fixedCost = custoMaoDeObra + custoDepreciacao + custoManutencao;
 
   const custoMaterial = parseFloat((form.composicao || []).reduce((acc, item) => {
-    const m = materials.find(x => String(x.id) === String(item.materialId));
+    let m = materials.find(x => String(x.id) === String(item.materialId));
+
+    // Fallback: Try match by Type + Color (Legacy Data Support)
+    if (!m && item.tipo) {
+      m = materials.find(x =>
+        (x.tipo || "").toLowerCase() === (item.tipo || "").toLowerCase() &&
+        (x.cor || "").toLowerCase() === (item.cor || "").toLowerCase()
+      );
+    }
+
     const pricePerGram = m ? (m.custoKg / 1000) : 0;
     return acc + ((item.peso || 0) * pricePerGram);
   }, 0).toFixed(2));
