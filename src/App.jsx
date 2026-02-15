@@ -2086,1630 +2086,1190 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         // Fallback: The OCR might have missed the "Total" line completely, and detected pieces are just pieces.
         // OR The "Total" is correct, but pieces are missing.
 
-        // New Strategy: "The Big Filter"
-        // If we have multiple numbers, and they are significantly smaller than the max, assume they are filaments.
-        // e.g. [119, 64, 45, 9, 3] -> 119 is Total. 64+45+9 approx 119.
+        // STRATEGY B: BAG OF WEIGHTS (Fallback & Validation)
+        // 1. Clean raw weights
+        let cleanWeights = rawWeights.filter(w => w > 0.1 && w < 10000);
 
-        // Let's just return ALL candidates that are likely components (e.g. < 90% of Total)
-      } else {
-        // STRATEGY B: BAG OF WEIGHTS (Fallback)
-        if (rawWeights.length > 0) {
-          const sortedWeights = [...rawWeights].sort((a, b) => b - a);
-          grandTotal = sortedWeights[0];
+        if (cleanWeights.length > 0) {
+          // Sort descending
+          cleanWeights.sort((a, b) => b - a);
 
-          // Assume other weights are components if they sum up?
-          // Or just take all smaller weights as potential filaments?
-          // Logic: If we have multiple weights, and the sum of (all - max) approx max, then those are the parts.
-          const candidates = sortedWeights.slice(1);
-          const sumCandidates = candidates.reduce((a, b) => a + b, 0);
+          let candidateTotal = cleanWeights[0];
+          let others = cleanWeights.slice(1);
+          let sumOthers = others.reduce((a, b) => a + b, 0);
 
-          if (Math.abs(sumCandidates - grandTotal) < grandTotal * 0.1) {
-            finalWeights = candidates;
-            log.push("Modo Soma: Pesos menores somam o total.");
-          } else {
-            // Return the big total, and maybe the next largest as a single part?
-            // Or if there are clearly defined "filament" sized weights (e.g. 50g, 20g)
-            // Let's just return the Total and let user split if needed.
-            // UNLESS we see multiple distinct values.
-            if (candidates.length > 0) {
-              // Filter out tiny values (noise)
-              const realParts = candidates.filter(c => c > 1);
-              if (realParts.length > 0) {
-                finalWeights = realParts; // Show all parts found
-                log.push("Modo Lista: Mostrando todos os pesos encontrados.");
-              } else {
-                finalWeights = [grandTotal];
-              }
-            } else {
-              finalWeights = [grandTotal];
+          // HEURISTIC: DECIMAL ERROR DETECTION
+          // Scenario: Read 801 (was 8.01) and 119 (Total). 
+          // 801 is Max. Others sum to 150 (approx). 801 is 5x the sum. Suspicious.
+          // Correct Total (119) should be approx sum of parts (or slightly less if some parts missing).
+
+          if (others.length > 0 && candidateTotal > sumOthers * 3) {
+            log.push(`Detectado possível erro de escala no valor ${candidateTotal}g (muito maior que a soma dos outros). Tentando corrigir...`);
+
+            // Try fixing the outlier (divide by 100)
+            // New set: [8.01, 119, 15, ...]
+            const fixedWeights = cleanWeights.map(w => w === candidateTotal ? w / 100 : w);
+            fixedWeights.sort((a, b) => b - a);
+
+            // Re-evaluate
+            const newTotal = fixedWeights[0]; // Should be 119 now
+            const newOthers = fixedWeights.slice(1);
+            const newSum = newOthers.reduce((a, b) => a + b, 0);
+
+            // If newTotal is closer to newSum, utilize these fixed weights
+            // 119 vs 60 (approx). Closer than 801 vs 150.
+            if (newTotal < newSum * 2) { // Relaxed check
+              cleanWeights = fixedWeights;
+              candidateTotal = newTotal;
+              others = newOthers;
+              log.push(`Valor corrigido para ${candidateTotal}g.`);
             }
+          }
+
+          grandTotal = candidateTotal;
+
+          // Now select likely components
+          // If we have a Line Scan result, prefer it, but use this to validate Total
+          if (detectedFilaments.length > 0) {
+            const scanSum = detectedFilaments.reduce((a, b) => a + b.weight, 0);
+            // If Scan elements sum nicely to our heuristic Total, trust them fully
+            if (Math.abs(scanSum - grandTotal) < grandTotal * 0.2) {
+              finalWeights = detectedFilaments.map(f => f.weight);
+            } else {
+              // Scan failed to match Total. Maybe scan missed lines?
+              // Use Bag of Weights components if they look better
+              // For now, keep Scan but update Total
+            }
+          } else {
+            // No lines found, use Bag of Weights
+            // Filter out duplicates of Total or Subtotals
+            // Basic logic: Any weight < 90% of Total is a component
+            const bagComponents = others.filter(w => w < grandTotal * 0.95);
+            if (bagComponents.length > 0) finalWeights = bagComponents;
+            else finalWeights = [grandTotal];
+
+            log.push("Modo 'Saco de Pesos' utilizado.");
           }
         } else {
           log.push("Erro: Nenhum peso encontrado.");
         }
-      }
 
-      updates.totalWeight = parseFloat(grandTotal.toFixed(2));
+        updates.totalWeight = parseFloat(grandTotal.toFixed(2));
 
-      const fillets = [];
-      // Populate fillets from finalWeights
-      fillets.push(...finalWeights.map((w, i) => ({
-        id: i + 1,
-        weight: w,
-        nome: `Filamento ${i + 1} (Auto)`
-      })));
+        const fillets = [];
+        // Populate fillets from finalWeights
+        fillets.push(...finalWeights.map((w, i) => ({
+          id: i + 1,
+          weight: w,
+          nome: `Filamento ${i + 1} (Auto)`
+        })));
 
-      // UPDATE FORM
-      const defaultMaterialId = (materials && materials.length > 0) ? materials[0].id : "";
+        // UPDATE FORM
+        const defaultMaterialId = (materials && materials.length > 0) ? materials[0].id : "";
 
-      if (fillets.length > 0) {
-        const newPartes = fillets.map((f, i) => ({
-          id: Date.now() + i,
-          nome: f.nome,
-          materialId: defaultMaterialId, // Auto-select first material
-          peso: f.weight,
-          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.weight / grandTotal)) : 0,
-          foto: ""
-        }));
+        if (fillets.length > 0) {
+          const newPartes = fillets.map((f, i) => ({
+            id: Date.now() + i,
+            nome: f.nome,
+            materialId: defaultMaterialId, // Auto-select first material
+            peso: f.weight,
+            tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.weight / grandTotal)) : 0,
+            foto: ""
+          }));
 
-        const newComp = newPartes.map(p => ({
-          materialId: defaultMaterialId, peso: p.peso, tipo: "", cor: ""
-        }));
+          const newComp = newPartes.map(p => ({
+            materialId: defaultMaterialId, peso: p.peso, tipo: "", cor: ""
+          }));
 
-        updates.partes = newPartes;
-        updates.composicao = newComp;
-        log.push(`Filamentos: ${fillets.map(f => f.weight + 'g').join(', ')}`);
+          updates.partes = newPartes;
+          updates.composicao = newComp;
+          log.push(`Filamentos: ${fillets.map(f => f.weight + 'g').join(', ')}`);
 
-      } else if (updates.totalWeight > 0) {
-        // Just update the first part or create one
-        const currentPart = (form.partes && form.partes[0]) || { id: Date.now(), nome: "Parte Principal", materialId: defaultMaterialId, peso: 0, tempo: 0 };
-        const newPart = { ...currentPart, peso: updates.totalWeight, tempo: updates.tempoImpressao || currentPart.tempo, materialId: currentPart.materialId || defaultMaterialId };
+        } else if (updates.totalWeight > 0) {
+          // Just update the first part or create one
+          const currentPart = (form.partes && form.partes[0]) || { id: Date.now(), nome: "Parte Principal", materialId: defaultMaterialId, peso: 0, tempo: 0 };
+          const newPart = { ...currentPart, peso: updates.totalWeight, tempo: updates.tempoImpressao || currentPart.tempo, materialId: currentPart.materialId || defaultMaterialId };
 
-        updates.partes = [newPart];
-        updates.composicao = [{ materialId: newPart.materialId, peso: updates.totalWeight, tipo: "", cor: "" }];
-        log.push(`Peso Total detectado: ${updates.totalWeight}g`);
-      } else {
-        log.push("Aviso: Nenhum peso válido encontrado.");
-      }
-
-      setForm(prev => ({ ...prev, ...updates }));
-      alert("Processamento concluído (Modo Local)!\n\n" + log.join('\n'));
-
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao ler tabela: " + error.message);
-    } finally {
-      setExtracting(false);
-    }
-  };
-
-  // Removed activeTab state
-
-  // Helper to update form
-  const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-  // Cost Calculation Effect
-  // --- COST CALCULATIONS (Real-time) ---
-  const cfg = {
-    energia: { custoKwh: 0.95, consumoMedioFDM: 150, ...(config?.energia || {}) },
-    trabalho: { horaTecnica: 35.00, ...(config?.trabalho || {}) },
-    depreciacao: { vidaUtilHoras: 2000, manutencaoPercent: 10, ...(config?.depreciacao || {}) },
-    logistica: { custoFretePadrao: 20.00, custoEmbalagemPadrao: 2.50, ...(config?.logistica || {}) }
-  };
-
-  const tempoHoras = (form.tempoImpressao || 0) / 60;
-
-  const custoMaoDeObra = parseFloat((tempoHoras * cfg.trabalho.horaTecnica).toFixed(2));
-  const custoDepreciacao = parseFloat(((3500 / cfg.depreciacao.vidaUtilHoras) * tempoHoras).toFixed(2));
-  const custoManutencao = parseFloat((custoDepreciacao * (cfg.depreciacao.manutencaoPercent / 100)).toFixed(2));
-  const fixedCost = custoMaoDeObra + custoDepreciacao + custoManutencao;
-
-  const custoMaterial = parseFloat((form.composicao || []).reduce((acc, item) => {
-    let m = materials.find(x => String(x.id) === String(item.materialId));
-
-    // Fallback: Try match by Type + Color (Legacy Data Support)
-    if (!m && item.tipo) {
-      const targetTipo = (item.tipo || "").trim().toLowerCase();
-      const targetCor = (item.cor || "").trim().toLowerCase();
-
-      m = materials.find(x => {
-        const matTipo = (x.tipo || "").trim().toLowerCase();
-        const matCor = (x.cor || "").trim().toLowerCase();
-        return matTipo === targetTipo && matCor === targetCor;
-      });
-
-      // Secondary Fallback: Try match just by Type if Color is missing/empty
-      if (!m && !targetCor) {
-        m = materials.find(x => (x.tipo || "").trim().toLowerCase() === targetTipo);
-      }
-    }
-
-    if (!m) {
-      console.warn("Material mismatch for item:", item);
-    } else {
-      // Debug Log
-      // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
-    }
-
-    const pricePerGram = m ? (m.custoKg / 1000) : 0;
-    return acc + ((item.peso || 0) * pricePerGram);
-  }, 0).toFixed(2));
-
-  const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
-
-  // Calculate Base based on ACTIVE costs
-  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
-  const calculatedBase = parseFloat((
-    (active.maoDeObra ? custoMaoDeObra : 0) +
-    (active.depreciacao ? custoDepreciacao : 0) +
-    (active.manutencao ? custoManutencao : 0) +
-    (active.material ? custoMaterial : 0) +
-    (active.energia ? custoEnergia : 0)
-  ).toFixed(2));
-
-  const totalCost = calculatedBase +
-    ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
-    ((active.frete !== false) ? (form.custoFrete || 0) : 0);
-
-  // Auto-update form state if calculations diverge (to save correct values)
-  useEffect(() => {
-    const feePercent = (
-      ((active.taxaMarketplace !== false) ? (form.taxaMarketplace || 0) : 0) +
-      ((active.impostos !== false) ? (form.impostos || 0) : 0)
-    ) / 100;
-    const profitPercent = (form.lucroDesejado || 0) / 100;
-
-    let suggestedPrice = 0;
-    if (feePercent < 1) {
-      suggestedPrice = (totalCost * (1 + profitPercent)) / (1 - feePercent);
-    } else {
-      suggestedPrice = totalCost * (1 + profitPercent + feePercent);
-    }
-
-    // Only update if changed > 0.01 to avoid loops
-    if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
-      setForm(prev => ({
-        ...prev,
-        custoBase: calculatedBase,
-        preco: parseFloat(suggestedPrice.toFixed(2))
-      }));
-    }
-  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
-
-  // ENABLE PASTE (Ctrl+V) for Images
-  // ENABLE PASTE (Ctrl+V) for Images
-  useEffect(() => {
-    const handlePaste = (e) => {
-      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf("image") !== -1) {
-          const blob = items[i].getAsFile();
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const result = event.target.result;
-            if (pasteTargetRef.current === "tech") {
-              setForm(prev => ({ ...prev, fotosTecnicas: [...(prev.fotosTecnicas || []), result] }));
-              showToast("Print técnico adicionado!", "success");
-            } else {
-              setForm(prev => {
-                const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), result];
-                return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
-              });
-              showToast("Imagem adicionada à galeria!", "success");
-            }
-          };
-          reader.readAsDataURL(blob);
+          updates.partes = [newPart];
+          updates.composicao = [{ materialId: newPart.materialId, peso: updates.totalWeight, tipo: "", cor: "" }];
+          log.push(`Peso Total detectado: ${updates.totalWeight}g`);
+        } else {
+          log.push("Aviso: Nenhum peso válido encontrado.");
         }
+
+        setForm(prev => ({ ...prev, ...updates }));
+        alert("Processamento concluído (Modo Local)!\n\n" + log.join('\n'));
+
+      } catch (error) {
+        console.error(error);
+        alert("Erro ao ler tabela: " + error.message);
+      } finally {
+        setExtracting(false);
       }
     };
-    window.addEventListener("paste", handlePaste);
-    return () => window.removeEventListener("paste", handlePaste);
-  }, []);
 
-  return (
-    <Modal title={product ? "Editar Produto (Atualizado)" : "Novo Produto (Atualizado)"} onClose={onClose} width={900}>
-      <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
+    // Removed activeTab state
 
-        {/* SECTION 1: INFO (Original) */}
-        <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>INFORMAÇÕES BÁSICAS</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Nome do Produto</label>
-              <input value={form.nome} onChange={e => update("nome", e.target.value)} style={inputStyle} placeholder="Ex: Vaso Geométrico" />
-            </div>
+    // Helper to update form
+    const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Categoria</label>
-              <select value={form.categoria} onChange={e => update("categoria", e.target.value)} style={inputStyle}>
-                {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Chaveiros", "Pets", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Estoque Pronta Entrega</label>
-              <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
-            </div>
+    // Cost Calculation Effect
+    // --- COST CALCULATIONS (Real-time) ---
+    const cfg = {
+      energia: { custoKwh: 0.95, consumoMedioFDM: 150, ...(config?.energia || {}) },
+      trabalho: { horaTecnica: 35.00, ...(config?.trabalho || {}) },
+      depreciacao: { vidaUtilHoras: 2000, manutencaoPercent: 10, ...(config?.depreciacao || {}) },
+      logistica: { custoFretePadrao: 20.00, custoEmbalagemPadrao: 2.50, ...(config?.logistica || {}) }
+    };
 
-            {/* IMAGE/VIDEO UPLOAD */}
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos e Vídeos do Produto</label>
+    const tempoHoras = (form.tempoImpressao || 0) / 60;
 
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                {/* Gallery */}
-                {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => {
-                  const isVideo = typeof url === "string" && (url.startsWith("data:video") || url.endsWith(".mp4") || url.endsWith(".webm") || url.endsWith(".mov"));
-                  return (
-                    <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#000" }}>
-                      {isVideo ? (
-                        <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
-                      ) : (
-                        <img src={url} alt={`Mídia ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      )}
+    const custoMaoDeObra = parseFloat((tempoHoras * cfg.trabalho.horaTecnica).toFixed(2));
+    const custoDepreciacao = parseFloat(((3500 / cfg.depreciacao.vidaUtilHoras) * tempoHoras).toFixed(2));
+    const custoManutencao = parseFloat((custoDepreciacao * (cfg.depreciacao.manutencaoPercent / 100)).toFixed(2));
+    const fixedCost = custoMaoDeObra + custoDepreciacao + custoManutencao;
 
-                      <button
-                        onClick={() => {
-                          const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
-                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
-                        }}
-                        style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12, zIndex: 10 }}
-                      >✕</button>
-                      {/* Video Indicator */}
-                      {isVideo && <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>🎥 Vídeo</div>}
-                    </div>
-                  );
-                })}
+    const custoMaterial = parseFloat((form.composicao || []).reduce((acc, item) => {
+      let m = materials.find(x => String(x.id) === String(item.materialId));
 
-                {/* Add Button */}
-                <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
-                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
-                  <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime"
-                    onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        // Limit video size (5MB)
-                        if (file.type.startsWith("video/") && file.size > 5 * 1024 * 1024) {
-                          alert("Vídeo muito grande! Máximo 5MB.");
-                          return;
+      // Fallback: Try match by Type + Color (Legacy Data Support)
+      if (!m && item.tipo) {
+        const targetTipo = (item.tipo || "").trim().toLowerCase();
+        const targetCor = (item.cor || "").trim().toLowerCase();
+
+        m = materials.find(x => {
+          const matTipo = (x.tipo || "").trim().toLowerCase();
+          const matCor = (x.cor || "").trim().toLowerCase();
+          return matTipo === targetTipo && matCor === targetCor;
+        });
+
+        // Secondary Fallback: Try match just by Type if Color is missing/empty
+        if (!m && !targetCor) {
+          m = materials.find(x => (x.tipo || "").trim().toLowerCase() === targetTipo);
+        }
+      }
+
+      if (!m) {
+        console.warn("Material mismatch for item:", item);
+      } else {
+        // Debug Log
+        // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
+      }
+
+      const pricePerGram = m ? (m.custoKg / 1000) : 0;
+      return acc + ((item.peso || 0) * pricePerGram);
+    }, 0).toFixed(2));
+
+    const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
+
+    // Calculate Base based on ACTIVE costs
+    const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
+    const calculatedBase = parseFloat((
+      (active.maoDeObra ? custoMaoDeObra : 0) +
+      (active.depreciacao ? custoDepreciacao : 0) +
+      (active.manutencao ? custoManutencao : 0) +
+      (active.material ? custoMaterial : 0) +
+      (active.energia ? custoEnergia : 0)
+    ).toFixed(2));
+
+    const totalCost = calculatedBase +
+      ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
+      ((active.frete !== false) ? (form.custoFrete || 0) : 0);
+
+    // Auto-update form state if calculations diverge (to save correct values)
+    useEffect(() => {
+      const feePercent = (
+        ((active.taxaMarketplace !== false) ? (form.taxaMarketplace || 0) : 0) +
+        ((active.impostos !== false) ? (form.impostos || 0) : 0)
+      ) / 100;
+      const profitPercent = (form.lucroDesejado || 0) / 100;
+
+      let suggestedPrice = 0;
+      if (feePercent < 1) {
+        suggestedPrice = (totalCost * (1 + profitPercent)) / (1 - feePercent);
+      } else {
+        suggestedPrice = totalCost * (1 + profitPercent + feePercent);
+      }
+
+      // Only update if changed > 0.01 to avoid loops
+      if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
+        setForm(prev => ({
+          ...prev,
+          custoBase: calculatedBase,
+          preco: parseFloat(suggestedPrice.toFixed(2))
+        }));
+      }
+    }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
+
+    // ENABLE PASTE (Ctrl+V) for Images
+    // ENABLE PASTE (Ctrl+V) for Images
+    useEffect(() => {
+      const handlePaste = (e) => {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+            const blob = items[i].getAsFile();
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const result = event.target.result;
+              if (pasteTargetRef.current === "tech") {
+                setForm(prev => ({ ...prev, fotosTecnicas: [...(prev.fotosTecnicas || []), result] }));
+                showToast("Print técnico adicionado!", "success");
+              } else {
+                setForm(prev => {
+                  const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), result];
+                  return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
+                });
+                showToast("Imagem adicionada à galeria!", "success");
+              }
+            };
+            reader.readAsDataURL(blob);
+          }
+        }
+      };
+      window.addEventListener("paste", handlePaste);
+      return () => window.removeEventListener("paste", handlePaste);
+    }, []);
+
+    return (
+      <Modal title={product ? "Editar Produto (Atualizado)" : "Novo Produto (Atualizado)"} onClose={onClose} width={900}>
+        <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
+
+          {/* SECTION 1: INFO (Original) */}
+          <div style={{ marginBottom: 32 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>INFORMAÇÕES BÁSICAS</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Nome do Produto</label>
+                <input value={form.nome} onChange={e => update("nome", e.target.value)} style={inputStyle} placeholder="Ex: Vaso Geométrico" />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Categoria</label>
+                <select value={form.categoria} onChange={e => update("categoria", e.target.value)} style={inputStyle}>
+                  {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Chaveiros", "Pets", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Estoque Pronta Entrega</label>
+                <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
+              </div>
+
+              {/* IMAGE/VIDEO UPLOAD */}
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos e Vídeos do Produto</label>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  {/* Gallery */}
+                  {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => {
+                    const isVideo = typeof url === "string" && (url.startsWith("data:video") || url.endsWith(".mp4") || url.endsWith(".webm") || url.endsWith(".mov"));
+                    return (
+                      <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#000" }}>
+                        {isVideo ? (
+                          <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                        ) : (
+                          <img src={url} alt={`Mídia ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        )}
+
+                        <button
+                          onClick={() => {
+                            const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
+                            setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
+                          }}
+                          style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12, zIndex: 10 }}
+                        >✕</button>
+                        {/* Video Indicator */}
+                        {isVideo && <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>🎥 Vídeo</div>}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add Button */}
+                  <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
+                    <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                    <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime"
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          // Limit video size (5MB)
+                          if (file.type.startsWith("video/") && file.size > 5 * 1024 * 1024) {
+                            alert("Vídeo muito grande! Máximo 5MB.");
+                            return;
+                          }
+
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
+                            setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                          };
+                          reader.readAsDataURL(file);
                         }
+                      }}
+                      style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                    />
+                  </div>
+                </div>
 
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
-                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
-                        };
-                        reader.readAsDataURL(file);
+                {/* URL Input */}
+                <div style={{ marginTop: 8 }}>
+                  <input
+                    placeholder="Ou adicione via URL e pressione Enter..."
+                    style={{ ...inputStyle, fontSize: 12 }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value) {
+                        const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), e.target.value];
+                        setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                        e.target.value = "";
+                        e.preventDefault();
                       }
                     }}
-                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
                   />
                 </div>
               </div>
 
-              {/* URL Input */}
-              <div style={{ marginTop: 8 }}>
-                <input
-                  placeholder="Ou adicione via URL e pressione Enter..."
-                  style={{ ...inputStyle, fontSize: 12 }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.target.value) {
-                      const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), e.target.value];
-                      setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
-                      e.target.value = "";
-                      e.preventDefault();
-                    }
-                  }}
-                />
+              {/* TECHNICAL SPECS IMAGES */}
+              <div
+                onMouseEnter={() => pasteTargetRef.current = "tech"}
+                onMouseLeave={() => pasteTargetRef.current = "main"}
+                style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6", transition: "border-color 0.2s" }}
+              >
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                  📄 Documentação Técnica / Prints do Fatiador
+                </label>
+                <p style={{ fontSize: 11, color: "#8E8E93", marginBottom: 12 }}>
+                  Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
+                  <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
+                </p>
+
+                {/* GEMINI KEY CONFIG - RE-ADDED */}
+                <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: 8, borderRadius: 6, border: "1px solid #E5E5EA" }}>
+                  <span style={{ fontSize: 16 }}>✨</span>
+                  <input
+                    type="password"
+                    placeholder="Cole sua API Key do Google Gemini aqui para IA Avançada..."
+                    value={geminiKey}
+                    onChange={(e) => saveGeminiKey(e.target.value)}
+                    style={{ ...inputStyle, fontSize: 11, height: 28, borderColor: geminiKey ? "#34C759" : "#E5E5EA", flex: 1, margin: 0 }}
+                  />
+                  <button
+                    onClick={(e) => { e.preventDefault(); window.open("https://aistudio.google.com/app/apikey", "_blank"); }}
+                    style={{ ...btnSecondary, fontSize: 10, padding: "0 8px", height: 28, whiteSpace: "nowrap" }}
+                    title="Obter chave gratuita no Google AI Studio"
+                  >
+                    Criar Chave Grátis ↗
+                  </button>
+                </div>
+
+
+
+                {/* OCR BUTTON - ALWAYS VISIBLE */}
+                <div style={{ marginBottom: 12 }}>
+                  <button
+                    onClick={(e) => { e.preventDefault(); handleExtractData(); }}
+                    disabled={extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0}
+                    style={{
+                      padding: "8px 12px",
+                      background: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#E5E5EA" : "#5856D6",
+                      color: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#8E8E93" : "#fff",
+                      border: "none", borderRadius: 8,
+                      fontSize: 12, fontWeight: 600,
+                      cursor: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "default" : "pointer",
+                      display: "flex", alignItems: "center", gap: 6,
+                      width: "100%", justifyContent: "center"
+                    }}
+                  >
+                    {extracting ? "Processando..." : (!form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "⚡ Adicione um print para extrair dados" : "⚡ Extrair Dados do Print (Beta)"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  {/* Tech Gallery */}
+                  {(form.fotosTecnicas || []).map((url, idx) => (
+                    <div key={idx} style={{ position: "relative", width: 100, height: 100, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#fff", cursor: "pointer" }} onClick={() => window.open(url, "_blank")}>
+                      <img src={url} alt={`Doc ${idx}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newFotos = (form.fotosTecnicas || []).filter((_, i) => i !== idx);
+                          setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                        }}
+                        style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
+                      >✕</button>
+                    </div>
+                  ))}
+
+                  {/* Add Button */}
+                  <div style={{ width: 100, height: 100, borderRadius: 8, border: "2px dashed #C7C7CC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#fff" }}>
+                    <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                    <input type="file" accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            const newFotos = [...(form.fotosTecnicas || []), reader.result];
+                            setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Descrição</label>
+                <textarea value={form.descricao} onChange={e => update("descricao", e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
               </div>
             </div>
+          </div>
 
-            {/* TECHNICAL SPECS IMAGES */}
-            <div
-              onMouseEnter={() => pasteTargetRef.current = "tech"}
-              onMouseLeave={() => pasteTargetRef.current = "main"}
-              style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6", transition: "border-color 0.2s" }}
-            >
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                📄 Documentação Técnica / Prints do Fatiador
-              </label>
-              <p style={{ fontSize: 11, color: "#8E8E93", marginBottom: 12 }}>
-                Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
-                <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
-              </p>
+          {/* SECTION 2: PRODUCTION (Assembly) */}
+          <div style={{ marginBottom: 32 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>ESTRUTURA DE PRODUÇÃO (COMPONENTES)</h3>
 
-              {/* GEMINI KEY CONFIG - RE-ADDED */}
-              <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: 8, borderRadius: 6, border: "1px solid #E5E5EA" }}>
-                <span style={{ fontSize: 16 }}>✨</span>
-                <input
-                  type="password"
-                  placeholder="Cole sua API Key do Google Gemini aqui para IA Avançada..."
-                  value={geminiKey}
-                  onChange={(e) => saveGeminiKey(e.target.value)}
-                  style={{ ...inputStyle, fontSize: 11, height: 28, borderColor: geminiKey ? "#34C759" : "#E5E5EA", flex: 1, margin: 0 }}
-                />
-                <button
-                  onClick={(e) => { e.preventDefault(); window.open("https://aistudio.google.com/app/apikey", "_blank"); }}
-                  style={{ ...btnSecondary, fontSize: 10, padding: "0 8px", height: 28, whiteSpace: "nowrap" }}
-                  title="Obter chave gratuita no Google AI Studio"
-                >
-                  Criar Chave Grátis ↗
-                </button>
+            <div style={{ background: "#F9F9F9", borderRadius: 12, padding: 16, border: "1px solid #E5E5EA" }}>
+              <div style={{ marginBottom: 16 }}>
+                {(form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }])).map((part, idx, arr) => (
+                  <div key={idx} style={{ background: "#fff", border: "1px solid #E5E5EA", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    {/* Part Photo */}
+                    <div style={{ width: 60, height: 60, background: "#F2F2F7", borderRadius: 6, position: "relative", flexShrink: 0, overflow: "hidden", border: "1px dashed #C7C7CC" }}>
+                      {part.foto ? <img src={part.foto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 20, color: "#C7C7CC" }}>📷</div>}
+                      <input type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} onChange={(e) => {
+                        if (e.target.files[0]) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            const newParts = [...arr];
+                            newParts[idx] = { ...part, foto: reader.result };
+                            // Update Logic Inline
+                            const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                            const newComposicao = newParts.map(p => {
+                              const m = materials.find(x => String(x.id) === String(p.materialId));
+                              return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                            });
+                            setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                          };
+                          reader.readAsDataURL(e.target.files[0]);
+                        }
+                      }} />
+                    </div>
+
+                    {/* Part Details */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
+                        <input placeholder="Nome da Parte (ex: Base, Tampa)" value={part.nome} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, nome: e.target.value };
+                          // Update Sync
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, flex: 1, fontWeight: "600" }} />
+                        {arr.length > 1 && <button onClick={() => {
+                          const newParts = arr.filter((_, i) => i !== idx);
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...btnSecondary, color: "#FF3B30", padding: "0 8px" }}>✕</button>}
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 8 }}>
+                        <div>
+                          <label style={{ fontSize: 10, color: "#8E8E93" }}>Material</label>
+                          <select value={part.materialId} onChange={e => {
+                            const newParts = [...arr]; newParts[idx] = { ...part, materialId: e.target.value };
+                            const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                            const newComposicao = newParts.map(p => {
+                              const m = materials.find(x => String(x.id) === String(p.materialId));
+                              return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                            });
+                            setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                          }} style={{ ...inputStyle, padding: "4px" }}>
+                            <option value="">Selecione...</option>
+                            {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor})</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 10, color: "#8E8E93" }}>Peso (g)</label>
+                          <input type="number" min="0" value={part.peso} onChange={e => {
+                            const newParts = [...arr]; newParts[idx] = { ...part, peso: parseFloat(e.target.value) || 0 };
+                            const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                            const newComposicao = newParts.map(p => {
+                              const m = materials.find(x => String(x.id) === String(p.materialId));
+                              return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                            });
+                            setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                          }} style={{ ...inputStyle, padding: "4px" }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 10, color: "#8E8E93" }}>Tempo (min)</label>
+                          <input type="number" min="0" value={part.tempo} onChange={e => {
+                            const newParts = [...arr]; newParts[idx] = { ...part, tempo: parseFloat(e.target.value) || 0 };
+                            const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                            // Just update time (and sync composicao just in case, though not needed for time)
+                            setForm(prev => ({ ...prev, partes: newParts, tempoImpressao: totalTime }));
+                          }} style={{ ...inputStyle, padding: "4px" }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
 
+              <button onClick={() => {
+                const currentParts = form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }]);
+                const newParts = [...currentParts, { id: Date.now(), nome: `Parte ${currentParts.length + 1}`, materialId: "", peso: 0, tempo: 0, foto: "" }];
+                // Sync
+                const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                const newComposicao = newParts.map(p => {
+                  const m = materials.find(x => String(x.id) === String(p.materialId));
+                  return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                });
+                setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+              }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", border: "1px dashed #007AFF", color: "#007AFF" }}>+ Adicionar Parte / Componente</button>
 
-
-              {/* OCR BUTTON - ALWAYS VISIBLE */}
-              <div style={{ marginBottom: 12 }}>
-                <button
-                  onClick={(e) => { e.preventDefault(); handleExtractData(); }}
-                  disabled={extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0}
-                  style={{
-                    padding: "8px 12px",
-                    background: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#E5E5EA" : "#5856D6",
-                    color: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#8E8E93" : "#fff",
-                    border: "none", borderRadius: 8,
-                    fontSize: 12, fontWeight: 600,
-                    cursor: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "default" : "pointer",
-                    display: "flex", alignItems: "center", gap: 6,
-                    width: "100%", justifyContent: "center"
-                  }}
-                >
-                  {extracting ? "Processando..." : (!form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "⚡ Adicione um print para extrair dados" : "⚡ Extrair Dados do Print (Beta)"}
-                </button>
+              <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666", padding: "0 4px" }}>
+                <span>Tempo Total: <strong>{form.tempoImpressao || 0} min</strong></span>
+                <span>Peso Total: <strong>{(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)} g</strong></span>
               </div>
+            </div>
+          </div>
 
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                {/* Tech Gallery */}
-                {(form.fotosTecnicas || []).map((url, idx) => (
-                  <div key={idx} style={{ position: "relative", width: 100, height: 100, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#fff", cursor: "pointer" }} onClick={() => window.open(url, "_blank")}>
-                    <img src={url} alt={`Doc ${idx}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newFotos = (form.fotosTecnicas || []).filter((_, i) => i !== idx);
-                        setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
-                      }}
-                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
-                    >✕</button>
+          {/* SECTION 3: PRICING */}
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+              <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
+                <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
+
+                {[
+                  { key: "material", label: "Material (Filamento)", val: custoMaterial },
+                  { key: "energia", label: "Energia Elétrica", val: custoEnergia },
+                  { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
+                  { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
+                  { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra }
+                ].map(item => (
+                  <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
+                      <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
+                        setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
+                      }} />
+                      {item.label}
+                    </label>
+                    <span style={{ textDecoration: (form.activeCosts?.[item.key] !== false) ? "none" : "line-through" }}>R$ {item.val.toFixed(2)}</span>
                   </div>
                 ))}
 
-                {/* Add Button */}
-                <div style={{ width: 100, height: 100, borderRadius: 8, border: "2px dashed #C7C7CC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#fff" }}>
-                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
-                  <input type="file" accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          const newFotos = [...(form.fotosTecnicas || []), reader.result];
-                          setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-                  />
-                </div>
-              </div>
-            </div>
+                <div style={{ height: 1, background: "#D1D1D6", margin: "10px 0" }} />
 
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Descrição</label>
-              <textarea value={form.descricao} onChange={e => update("descricao", e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
-            </div>
-          </div>
-        </div>
-
-        {/* SECTION 2: PRODUCTION (Assembly) */}
-        <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>ESTRUTURA DE PRODUÇÃO (COMPONENTES)</h3>
-
-          <div style={{ background: "#F9F9F9", borderRadius: 12, padding: 16, border: "1px solid #E5E5EA" }}>
-            <div style={{ marginBottom: 16 }}>
-              {(form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }])).map((part, idx, arr) => (
-                <div key={idx} style={{ background: "#fff", border: "1px solid #E5E5EA", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  {/* Part Photo */}
-                  <div style={{ width: 60, height: 60, background: "#F2F2F7", borderRadius: 6, position: "relative", flexShrink: 0, overflow: "hidden", border: "1px dashed #C7C7CC" }}>
-                    {part.foto ? <img src={part.foto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 20, color: "#C7C7CC" }}>📷</div>}
-                    <input type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} onChange={(e) => {
-                      if (e.target.files[0]) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          const newParts = [...arr];
-                          newParts[idx] = { ...part, foto: reader.result };
-                          // Update Logic Inline
-                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                          const newComposicao = newParts.map(p => {
-                            const m = materials.find(x => String(x.id) === String(p.materialId));
-                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                          });
-                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                        };
-                        reader.readAsDataURL(e.target.files[0]);
-                      }
-                    }} />
-                  </div>
-
-                  {/* Part Details */}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
-                      <input placeholder="Nome da Parte (ex: Base, Tampa)" value={part.nome} onChange={e => {
-                        const newParts = [...arr]; newParts[idx] = { ...part, nome: e.target.value };
-                        // Update Sync
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        const newComposicao = newParts.map(p => {
-                          const m = materials.find(x => String(x.id) === String(p.materialId));
-                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                        });
-                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                      }} style={{ ...inputStyle, flex: 1, fontWeight: "600" }} />
-                      {arr.length > 1 && <button onClick={() => {
-                        const newParts = arr.filter((_, i) => i !== idx);
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        const newComposicao = newParts.map(p => {
-                          const m = materials.find(x => String(x.id) === String(p.materialId));
-                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                        });
-                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                      }} style={{ ...btnSecondary, color: "#FF3B30", padding: "0 8px" }}>✕</button>}
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 8 }}>
-                      <div>
-                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Material</label>
-                        <select value={part.materialId} onChange={e => {
-                          const newParts = [...arr]; newParts[idx] = { ...part, materialId: e.target.value };
-                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                          const newComposicao = newParts.map(p => {
-                            const m = materials.find(x => String(x.id) === String(p.materialId));
-                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                          });
-                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                        }} style={{ ...inputStyle, padding: "4px" }}>
-                          <option value="">Selecione...</option>
-                          {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor})</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Peso (g)</label>
-                        <input type="number" min="0" value={part.peso} onChange={e => {
-                          const newParts = [...arr]; newParts[idx] = { ...part, peso: parseFloat(e.target.value) || 0 };
-                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                          const newComposicao = newParts.map(p => {
-                            const m = materials.find(x => String(x.id) === String(p.materialId));
-                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                          });
-                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                        }} style={{ ...inputStyle, padding: "4px" }} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Tempo (min)</label>
-                        <input type="number" min="0" value={part.tempo} onChange={e => {
-                          const newParts = [...arr]; newParts[idx] = { ...part, tempo: parseFloat(e.target.value) || 0 };
-                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                          // Just update time (and sync composicao just in case, though not needed for time)
-                          setForm(prev => ({ ...prev, partes: newParts, tempoImpressao: totalTime }));
-                        }} style={{ ...inputStyle, padding: "4px" }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button onClick={() => {
-              const currentParts = form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }]);
-              const newParts = [...currentParts, { id: Date.now(), nome: `Parte ${currentParts.length + 1}`, materialId: "", peso: 0, tempo: 0, foto: "" }];
-              // Sync
-              const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-              const newComposicao = newParts.map(p => {
-                const m = materials.find(x => String(x.id) === String(p.materialId));
-                return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-              });
-              setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-            }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", border: "1px dashed #007AFF", color: "#007AFF" }}>+ Adicionar Parte / Componente</button>
-
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666", padding: "0 4px" }}>
-              <span>Tempo Total: <strong>{form.tempoImpressao || 0} min</strong></span>
-              <span>Peso Total: <strong>{(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)} g</strong></span>
-            </div>
-          </div>
-        </div>
-
-        {/* SECTION 3: PRICING */}
-        <div>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-            <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
-              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
-
-              {[
-                { key: "material", label: "Material (Filamento)", val: custoMaterial },
-                { key: "energia", label: "Energia Elétrica", val: custoEnergia },
-                { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
-                { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
-                { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra }
-              ].map(item => (
-                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
-                    <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
-                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
-                    }} />
-                    {item.label}
-                  </label>
-                  <span style={{ textDecoration: (form.activeCosts?.[item.key] !== false) ? "none" : "line-through" }}>R$ {item.val.toFixed(2)}</span>
-                </div>
-              ))}
-
-              <div style={{ height: 1, background: "#D1D1D6", margin: "10px 0" }} />
-
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, fontWeight: 600, color: "#1C1C1E" }}>
-                <span>Custo Base (Produção)</span>
-                <span>R$ {calculatedBase.toFixed(2)}</span>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                  <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
-                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
-                  }} />
-                  Embalagem
-                </label>
-                <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.embalagem !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.embalagem !== false) ? "none" : "line-through" }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                  <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
-                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
-                  }} />
-                  Frete / Logística
-                </label>
-                <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.frete !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.frete !== false) ? "none" : "line-through" }} />
-              </div>
-
-              <div style={{ borderTop: "1px solid #D1D1D6", margin: "12px 0", paddingTop: 12, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: "#000" }}>
-                <span>Custo Total Final</span>
-                <span>R$ {(totalCost).toFixed(2)}</span>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ marginBottom: 20, padding: 16, background: "#fff", borderRadius: 8, border: "1px solid #E5E5EA" }}>
-                <h5 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 12px", color: "#8E8E93", letterSpacing: 0.5, textTransform: "uppercase" }}>TAXAS & VENDAS</h5>
-
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.impostos !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                    <input type="checkbox" checked={active.impostos !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), impostos: e.target.checked } }))} />
-                    Impostos
-                  </label>
-                  <div style={{ position: "relative", width: 80 }}>
-                    <input type="number" value={form.impostos || 0} onChange={e => update("impostos", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.impostos !== false) ? "#000" : "#C7C7CC", textDecoration: (active.impostos !== false) ? "none" : "line-through" }} />
-                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
-                  </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, fontWeight: 600, color: "#1C1C1E" }}>
+                  <span>Custo Base (Produção)</span>
+                  <span>R$ {calculatedBase.toFixed(2)}</span>
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.taxaMarketplace !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                    <input type="checkbox" checked={active.taxaMarketplace !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), taxaMarketplace: e.target.checked } }))} />
-                    Marketplace
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
+                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
+                    }} />
+                    Embalagem
                   </label>
-                  <div style={{ position: "relative", width: 80 }}>
-                    <input type="number" value={form.taxaMarketplace || 0} onChange={e => update("taxaMarketplace", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.taxaMarketplace !== false) ? "#000" : "#C7C7CC", textDecoration: (active.taxaMarketplace !== false) ? "none" : "line-through" }} />
-                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
-                  </div>
+                  <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.embalagem !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.embalagem !== false) ? "none" : "line-through" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
+                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
+                    }} />
+                    Frete / Logística
+                  </label>
+                  <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.frete !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.frete !== false) ? "none" : "line-through" }} />
+                </div>
+
+                <div style={{ borderTop: "1px solid #D1D1D6", margin: "12px 0", paddingTop: 12, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: "#000" }}>
+                  <span>Custo Total Final</span>
+                  <span>R$ {(totalCost).toFixed(2)}</span>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
-                <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
-              </div>
+              <div>
+                <div style={{ marginBottom: 20, padding: 16, background: "#fff", borderRadius: 8, border: "1px solid #E5E5EA" }}>
+                  <h5 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 12px", color: "#8E8E93", letterSpacing: 0.5, textTransform: "uppercase" }}>TAXAS & VENDAS</h5>
 
-              <div style={{ background: "#34C759", padding: 20, borderRadius: 12, color: "#fff", textAlign: "center" }}>
-                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", fontWeight: 600 }}>Preço de Venda</label>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
-                  <span style={{ fontSize: 20 }}>R$</span>
-                  <input
-                    type="number"
-                    value={form.preco}
-                    onChange={e => update("preco", parseFloat(e.target.value))}
-                    onBlur={() => update("preco", parseFloat((form.preco || 0).toFixed(2)))}
-                    step="0.01"
-                    style={{ background: "transparent", border: "none", color: "#fff", fontSize: 32, fontWeight: 700, width: 140, textAlign: "center", outline: "none" }}
-                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.impostos !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                      <input type="checkbox" checked={active.impostos !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), impostos: e.target.checked } }))} />
+                      Impostos
+                    </label>
+                    <div style={{ position: "relative", width: 80 }}>
+                      <input type="number" value={form.impostos || 0} onChange={e => update("impostos", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.impostos !== false) ? "#000" : "#C7C7CC", textDecoration: (active.impostos !== false) ? "none" : "line-through" }} />
+                      <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.taxaMarketplace !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                      <input type="checkbox" checked={active.taxaMarketplace !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), taxaMarketplace: e.target.checked } }))} />
+                      Marketplace
+                    </label>
+                    <div style={{ position: "relative", width: 80 }}>
+                      <input type="number" value={form.taxaMarketplace || 0} onChange={e => update("taxaMarketplace", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.taxaMarketplace !== false) ? "#000" : "#C7C7CC", textDecoration: (active.taxaMarketplace !== false) ? "none" : "line-through" }} />
+                      <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
+                  <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
+                </div>
+
+                <div style={{ background: "#34C759", padding: 20, borderRadius: 12, color: "#fff", textAlign: "center" }}>
+                  <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", fontWeight: 600 }}>Preço de Venda</label>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
+                    <span style={{ fontSize: 20 }}>R$</span>
+                    <input
+                      type="number"
+                      value={form.preco}
+                      onChange={e => update("preco", parseFloat(e.target.value))}
+                      onBlur={() => update("preco", parseFloat((form.preco || 0).toFixed(2)))}
+                      step="0.01"
+                      style={{ background: "transparent", border: "none", color: "#fff", fontSize: 32, fontWeight: 700, width: 140, textAlign: "center", outline: "none" }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+
         </div>
 
-      </div>
-
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20, paddingTop: 20, borderTop: "1px solid #E5E5EA" }}>
-        <button onClick={onClose} style={btnSecondary}>Cancelar</button>
-        <button onClick={() => onSave(form)} style={btnPrimary}>Salvar Produto</button>
-      </div>
-    </Modal>
-  );
-}
-
-// ============================================================
-// DASHBOARD MODULE
-// ============================================================
-function DashboardModule() {
-  const { data } = useContext(AppContext);
-
-  const totalFaturamento = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
-  const totalPendente = data.financeiro.contasReceber.filter(c => c.status !== "recebido").reduce((s, c) => s + c.valor - (c.valorRecebido || 0), 0);
-  const totalPagar = data.financeiro.contasPagar.filter(c => c.status !== "pago").reduce((s, c) => s + c.valor, 0);
-  const impressorasAtivas = data.impressoras.filter(i => i.status === "imprimindo").length;
-  const pedidosAtivos = data.pedidos.filter(p => !["entregue", "cancelado"].includes(p.status)).length;
-  const alertasEstoque = data.materiais.filter(m => m.quantidadeAtual <= m.estoqueMinimo).length;
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      {/* KPI CARDS */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
-        <StatCard icon="💰" label="Faturado" value={`R$ ${totalFaturamento.toFixed(2)}`} sub="este mês" color="#34C759" />
-        <StatCard icon="⏳" label="A Receber" value={`R$ ${totalPendente.toFixed(2)}`} sub="pendente" color="#FF9500" />
-        <StatCard icon="📋" label="Pedidos Ativos" value={pedidosAtivos} sub="em andamento" color="#007AFF" />
-        <StatCard icon="🖨️" label="Impressoras" value={`${impressorasAtivas}/${data.impressoras.length}`} sub="ativas agora" color="#AF52DE" />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-        {/* PEDIDOS RECENTES */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>📋 Pedidos Recentes</h3>
-          {data.pedidos.slice(0, 5).map(p => (
-            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
-              <div>
-                <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>
-                  {p.itens && p.itens.length > 0 ? (
-                    p.itens.length === 1 ? p.itens[0].produto : `${p.itens[0].produto} + ${p.itens.length - 1}`
-                  ) : "Pedido Vazio"}
-                </div>
-                <div style={{ fontSize: 11, color: "#8E8E93" }}>
-                  R$ {p.valorTotal.toFixed(2)}
-                </div>
-              </div>
-              <StatusBadge status={p.status} />
-            </div>
-          ))}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20, paddingTop: 20, borderTop: "1px solid #E5E5EA" }}>
+          <button onClick={onClose} style={btnSecondary}>Cancelar</button>
+          <button onClick={() => onSave(form)} style={btnPrimary}>Salvar Produto</button>
         </div>
-
-        {/* PRODUCAO ATIVA */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🏭 Produção Ativa</h3>
-          {data.producao.slice(0, 5).map(p => (
-            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
-              <div>
-                <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>{p.pedidoRef}</div>
-                <div style={{ fontSize: 11, color: "#8E8E93" }}>{p.impressora} • {p.material}</div>
-              </div>
-              <StatusBadge status={p.status} />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {/* ALERTAS ESTOQUE */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600, color: "#000" }}>⚠️ Alertas de Estoque</h3>
-          {alertasEstoque === 0 ? (
-            <div style={{ color: "#34C759", fontSize: 13 }}>✓ Todos os materiais acima do mínimo</div>
-          ) : data.materiais.filter(m => m.quantidadeAtual <= m.estoqueMinimo).map(m => (
-            <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(99,102,241,0.08)" }}>
-              <div>
-                <div style={{ fontSize: 13, color: "#f87171", fontWeight: 500 }}>{m.nome}</div>
-                <div style={{ fontSize: 11, color: "#64748b" }}>Atual: {m.quantidadeAtual}{m.unidade} • Mín: {m.estoqueMinimo}{m.unidade}</div>
-              </div>
-              <Badge color="#ef4444">BAIXO</Badge>
-            </div>
-          ))}
-        </div>
-
-        {/* CONTAS */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>💳 Contas a Pagar (Próximas)</h3>
-          {data.financeiro.contasPagar.filter(c => c.status !== "pago").slice(0, 4).map(c => (
-            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
-              <div>
-                <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>{c.descricao}</div>
-                <div style={{ fontSize: 11, color: "#8E8E93" }}>Vence: {c.dataVencimento}</div>
-              </div>
-              <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 13, color: "#FF3B30", fontWeight: 600 }}>R$ {c.valor.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// GENERIC CRUD MODULE
-// ============================================================
-function CrudModule({ entity, title, fields }) {
-  const { data, setData, showToast, navigateTo } = useContext(AppContext);
-  const [search, setSearch] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-
-  const items = data[entity] || [];
-  const filtered = items.filter(item =>
-    Object.values(item).some(v => String(v).toLowerCase().includes(search.toLowerCase()))
-  );
-
-  const columns = fields
-    .filter(f => !f.hiddenInTable && f.type !== "textarea") // Respect hiddenInTable
-    .slice(0, 7)
-    .map(f => ({
-      key: f.key,
-      label: f.label,
-      render: (v) => {
-        if (f.key === "imagemUrl") {
-          return (
-            <img
-              src={v || "https://placehold.co/40x40?text=3D"}
-              alt=""
-              onClick={() => { if (v) window.open(v, "_blank"); }}
-              style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover", cursor: v ? "pointer" : "default" }}
-            />
-          );
-        }
-        if (f.type === "composition") {
-          // v is array of materials
-          if (!Array.isArray(v) || v.length === 0) return <span style={{ color: "#999", fontSize: 11 }}>Sem material</span>;
-          return (
-            <div style={{ fontSize: 11 }}>
-              {v.map((m, i) => (
-                <div key={i}>{m.tipo} {m.cor} ({m.peso}g)</div>
-              ))}
-            </div>
-          );
-        }
-        if (f.key === "preco" || f.key === "custoBase") return `R$ ${(v || 0).toFixed(2)}`;
-        if (f.key === "tempoImpressao") return `${v} min`;
-        if (f.key === "pesoMaterial") return `${v}g`;
-        return v;
-      }
-    }));
-
-  if (entity === "produtos") {
-    columns.push({
-      key: "actions_extra", label: "",
-      render: (v, row) => (
-        <button
-          onClick={() => navigateTo && navigateTo("orcamentos", { action: "new", product: row })}
-          style={{ ...btnSecondary, padding: "4px 8px", fontSize: 11, background: "#34C759", color: "#fff", border: "none", marginRight: 8 }}
-          title="Criar Orçamento"
-        >
-          💲 Orçar
-        </button>
-      )
-    });
+      </Modal>
+    );
   }
 
-  const openNew = () => { setEditItem(null); setForm({}); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+  // ============================================================
+  // DASHBOARD MODULE
+  // ============================================================
+  function DashboardModule() {
+    const { data } = useContext(AppContext);
 
-  const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+    const totalFaturamento = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
+    const totalPendente = data.financeiro.contasReceber.filter(c => c.status !== "recebido").reduce((s, c) => s + c.valor - (c.valorRecebido || 0), 0);
+    const totalPagar = data.financeiro.contasPagar.filter(c => c.status !== "pago").reduce((s, c) => s + c.valor, 0);
+    const impressorasAtivas = data.impressoras.filter(i => i.status === "imprimindo").length;
+    const pedidosAtivos = data.pedidos.filter(p => !["entregue", "cancelado"].includes(p.status)).length;
+    const alertasEstoque = data.materiais.filter(m => m.quantidadeAtual <= m.estoqueMinimo).length;
 
-  const handleSave = () => {
-    if (editItem) {
-      setData(prev => ({ ...prev, [entity]: prev[entity].map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
-      showToast("Registro atualizado com sucesso!");
-    } else {
-      setData(prev => ({ ...prev, [entity]: [...prev[entity], { ...form, id: generateId() }] }));
-      showToast("Registro criado com sucesso!");
-    }
-    setShowModal(false);
-  };
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        {/* KPI CARDS */}
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+          <StatCard icon="💰" label="Faturado" value={`R$ ${totalFaturamento.toFixed(2)}`} sub="este mês" color="#34C759" />
+          <StatCard icon="⏳" label="A Receber" value={`R$ ${totalPendente.toFixed(2)}`} sub="pendente" color="#FF9500" />
+          <StatCard icon="📋" label="Pedidos Ativos" value={pedidosAtivos} sub="em andamento" color="#007AFF" />
+          <StatCard icon="🖨️" label="Impressoras" value={`${impressorasAtivas}/${data.impressoras.length}`} sub="ativas agora" color="#AF52DE" />
+        </div>
 
-  const handleDelete = (id) => {
-    if (window.confirm("Tem certeza que deseja excluir este registro?")) {
-      setData(prev => ({ ...prev, [entity]: prev[entity].filter(i => i.id !== id) }));
-      showToast("Registro excluído", "warning");
-    }
-  };
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <input placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 300 }} />
-        <button onClick={openNew} style={btnPrimary}>+ Novo {title.slice(0, -1)}</button>
-      </div>
-
-      <div style={cardStyle}>
-        <DataTable columns={columns} data={filtered} onEdit={openEdit} onDelete={handleDelete} />
-      </div>
-
-      {showModal && (
-        <Modal title={editItem ? `Editar ${title.slice(0, -1)}` : `Novo ${title.slice(0, -1)}`} onClose={() => setShowModal(false)} width={1000}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {fields.filter(f => !f.hiddenInForm && f.type !== "pricing").map(f => (
-              <div key={f.key} style={f.type === "textarea" || f.type === "composition" ? { gridColumn: "1 / -1" } : {}}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />
-              </div>
-            ))}
-
-            {/* Render Pricing Widget at the bottom */}
-            {fields.filter(f => f.type === "pricing").map(f => (
-              <div key={f.key} style={{ gridColumn: "1 / -1", marginTop: 16 }}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+          {/* PEDIDOS RECENTES */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>📋 Pedidos Recentes</h3>
+            {data.pedidos.slice(0, 5).map(p => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>
+                    {p.itens && p.itens.length > 0 ? (
+                      p.itens.length === 1 ? p.itens[0].produto : `${p.itens[0].produto} + ${p.itens.length - 1}`
+                    ) : "Pedido Vazio"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#8E8E93" }}>
+                    R$ {p.valorTotal.toFixed(2)}
+                  </div>
+                </div>
+                <StatusBadge status={p.status} />
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24, paddingTop: 16, borderTop: "1px solid #E5E5EA" }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+
+          {/* PRODUCAO ATIVA */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🏭 Produção Ativa</h3>
+            {data.producao.slice(0, 5).map(p => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>{p.pedidoRef}</div>
+                  <div style={{ fontSize: 11, color: "#8E8E93" }}>{p.impressora} • {p.material}</div>
+                </div>
+                <StatusBadge status={p.status} />
+              </div>
+            ))}
           </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
+        </div>
 
-// ============================================================
-// ORCAMENTOS MODULE
-// ============================================================
-function OrcamentosModule() {
-  const { data, setData, showToast, navigationData, setNavigationData } = useContext(AppContext);
-  const [search, setSearch] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {/* ALERTAS ESTOQUE */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600, color: "#000" }}>⚠️ Alertas de Estoque</h3>
+            {alertasEstoque === 0 ? (
+              <div style={{ color: "#34C759", fontSize: 13 }}>✓ Todos os materiais acima do mínimo</div>
+            ) : data.materiais.filter(m => m.quantidadeAtual <= m.estoqueMinimo).map(m => (
+              <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(99,102,241,0.08)" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "#f87171", fontWeight: 500 }}>{m.nome}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Atual: {m.quantidadeAtual}{m.unidade} • Mín: {m.estoqueMinimo}{m.unidade}</div>
+                </div>
+                <Badge color="#ef4444">BAIXO</Badge>
+              </div>
+            ))}
+          </div>
 
-  // Check for navigation data (pre-fill)
-  useEffect(() => {
-    if (navigationData && navigationData.action === "new" && navigationData.product) {
-      const prod = navigationData.product;
-      setEditItem(null);
-      setForm({
-        status: "orcamento",
-        dataPedido: new Date().toISOString().split("T")[0],
-        itens: [{ produto: prod.nome, quantidade: 1, valorUnitario: prod.preco }],
-        valorTotal: prod.preco // Initial total
+          {/* CONTAS */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>💳 Contas a Pagar (Próximas)</h3>
+            {data.financeiro.contasPagar.filter(c => c.status !== "pago").slice(0, 4).map(c => (
+              <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "#1C1C1E", fontWeight: 500 }}>{c.descricao}</div>
+                  <div style={{ fontSize: 11, color: "#8E8E93" }}>Vence: {c.dataVencimento}</div>
+                </div>
+                <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 13, color: "#FF3B30", fontWeight: 600 }}>R$ {c.valor.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
+  // GENERIC CRUD MODULE
+  // ============================================================
+  function CrudModule({ entity, title, fields }) {
+    const { data, setData, showToast, navigateTo } = useContext(AppContext);
+    const [search, setSearch] = useState("");
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
+
+    const items = data[entity] || [];
+    const filtered = items.filter(item =>
+      Object.values(item).some(v => String(v).toLowerCase().includes(search.toLowerCase()))
+    );
+
+    const columns = fields
+      .filter(f => !f.hiddenInTable && f.type !== "textarea") // Respect hiddenInTable
+      .slice(0, 7)
+      .map(f => ({
+        key: f.key,
+        label: f.label,
+        render: (v) => {
+          if (f.key === "imagemUrl") {
+            return (
+              <img
+                src={v || "https://placehold.co/40x40?text=3D"}
+                alt=""
+                onClick={() => { if (v) window.open(v, "_blank"); }}
+                style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover", cursor: v ? "pointer" : "default" }}
+              />
+            );
+          }
+          if (f.type === "composition") {
+            // v is array of materials
+            if (!Array.isArray(v) || v.length === 0) return <span style={{ color: "#999", fontSize: 11 }}>Sem material</span>;
+            return (
+              <div style={{ fontSize: 11 }}>
+                {v.map((m, i) => (
+                  <div key={i}>{m.tipo} {m.cor} ({m.peso}g)</div>
+                ))}
+              </div>
+            );
+          }
+          if (f.key === "preco" || f.key === "custoBase") return `R$ ${(v || 0).toFixed(2)}`;
+          if (f.key === "tempoImpressao") return `${v} min`;
+          if (f.key === "pesoMaterial") return `${v}g`;
+          return v;
+        }
+      }));
+
+    if (entity === "produtos") {
+      columns.push({
+        key: "actions_extra", label: "",
+        render: (v, row) => (
+          <button
+            onClick={() => navigateTo && navigateTo("orcamentos", { action: "new", product: row })}
+            style={{ ...btnSecondary, padding: "4px 8px", fontSize: 11, background: "#34C759", color: "#fff", border: "none", marginRight: 8 }}
+            title="Criar Orçamento"
+          >
+            💲 Orçar
+          </button>
+        )
       });
-      setShowModal(true);
-      setNavigationData(null); // Clear after using
     }
-  }, [navigationData]);
 
-  const filtered = data.pedidos.filter(p =>
-    p.status === "orcamento" &&
-    JSON.stringify(p).toLowerCase().includes(search.toLowerCase())
-  );
+    const openNew = () => { setEditItem(null); setForm({}); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
 
-  const openNew = () => { setEditItem(null); setForm({ status: "orcamento", dataPedido: new Date().toISOString().split("T")[0], itens: [] }); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+    const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
-  const handleChange = (key, val) => {
-    setForm(prev => {
-      const next = { ...prev, [key]: val };
-      // Auto calc total from items
-      if (key === "itens") {
-        next.valorTotal = val.reduce((acc, item) => acc + ((item.quantidade || 0) * (item.valorUnitario || 0)), 0);
+    const handleSave = () => {
+      if (editItem) {
+        setData(prev => ({ ...prev, [entity]: prev[entity].map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
+        showToast("Registro atualizado com sucesso!");
+      } else {
+        setData(prev => ({ ...prev, [entity]: [...prev[entity], { ...form, id: generateId() }] }));
+        showToast("Registro criado com sucesso!");
       }
-      return next;
-    });
-  };
+      setShowModal(false);
+    };
 
-  const handleSave = () => {
-    if (editItem) {
-      setData(prev => ({ ...prev, pedidos: prev.pedidos.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
-      showToast("Orçamento atualizado!");
-    } else {
-      setData(prev => ({ ...prev, pedidos: [...prev.pedidos, { ...form, id: generateId() }] }));
-      showToast("Orçamento criado!");
-    }
-    setShowModal(false);
-  };
-
-  const handleApprove = (item) => {
-    setData(prev => {
-      // 1. Calculate new stock
-      let newMaterials = [...prev.materiais];
-      let newProducts = [...prev.produtos];
-      let stockUpdated = false;
-
-      if (item.itens && Array.isArray(item.itens)) {
-        item.itens.forEach(orderItem => {
-          // Find product index to update stock
-          let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
-          if (prodIndex === -1) prodIndex = newProducts.findIndex(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
-
-          let qtyNeeded = orderItem.quantidade || 0;
-          let qtyToMake = qtyNeeded;
-
-          if (prodIndex >= 0) {
-            const available = newProducts[prodIndex].estoqueAtual || 0;
-            // 1. Try to fulfill from Stock
-            if (available > 0) {
-              const qtyFromStock = Math.min(qtyNeeded, available);
-              qtyToMake = qtyNeeded - qtyFromStock;
-
-              newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - qtyFromStock };
-              if (qtyFromStock > 0) showToast(`${qtyFromStock} un de '${newProducts[prodIndex].nome}' via Estoque`, "info");
-            }
-
-            // 2. Manufacture remainder
-            if (qtyToMake > 0 && newProducts[prodIndex].composicao) {
-              newProducts[prodIndex].composicao.forEach(comp => {
-                let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-                if (matIndex === -1 && comp.tipo && comp.cor) {
-                  // Fallback lookup
-                  const tType = (comp.tipo || "").toLowerCase().trim();
-                  const tColor = (comp.cor || "").toLowerCase().trim();
-                  matIndex = newMaterials.findIndex(m => {
-                    const mT = (m.tipo || "").toLowerCase().trim();
-                    const mC = (m.cor || "").toLowerCase().trim();
-                    return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
-                  });
-                }
-
-                if (matIndex >= 0) {
-                  // Deduct based on qtyToMake
-                  const deductAmount = (comp.peso || 0) * qtyToMake;
-                  const currentStock = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
-                  newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, currentStock - deductAmount) };
-                  stockUpdated = true;
-                }
-              });
-            }
-          }
-        });
+    const handleDelete = (id) => {
+      if (window.confirm("Tem certeza que deseja excluir este registro?")) {
+        setData(prev => ({ ...prev, [entity]: prev[entity].filter(i => i.id !== id) }));
+        showToast("Registro excluído", "warning");
       }
+    };
 
-      const updatedPedidos = prev.pedidos.map(i => i.id === item.id ? { ...i, status: "aprovado" } : i);
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <input placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 300 }} />
+          <button onClick={openNew} style={btnPrimary}>+ Novo {title.slice(0, -1)}</button>
+        </div>
 
-      // FINANCE: Auto-generate Receivable on Approval
-      let newFinanceiro = { ...prev.financeiro };
-      const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${item.id}`));
+        <div style={cardStyle}>
+          <DataTable columns={columns} data={filtered} onEdit={openEdit} onDelete={handleDelete} />
+        </div>
 
-      if (!billExists) {
-        const clientName = prev.clientes.find(c => c.id === item.clienteId)?.nome || "Cliente";
-        newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
-          id: generateId(),
-          descricao: `Pedido #${item.id} - ${clientName}`,
-          valor: parseFloat(item.valorTotal || 0),
-          dataVencimento: new Date().toISOString().split('T')[0],
-          status: "pendente",
-          formaPagamento: item.formaPagamento || "PIX"
-        }];
-        showToast("Conta a receber gerada automaticamente!", "success");
-      }
-
-      return {
-        ...prev,
-        materiais: newMaterials,
-        produtos: newProducts,
-        pedidos: updatedPedidos,
-        financeiro: newFinanceiro
-      };
-    });
-
-    showToast("Orçamento aprovado e estoque deduzido!", "success");
-  };
-
-  const handleDelete = (id) => {
-    setData(prev => ({ ...prev, pedidos: prev.pedidos.filter(i => i.id !== id) }));
-    showToast("Orçamento excluído", "warning");
-  };
-
-  const orcamentoFields = [
-    { key: "clienteId", label: "Cliente", type: "select", options: data.clientes.map(c => ({ label: c.nome, value: c.id })) },
-    { key: "itens", label: "Produtos", type: "orderItems" },
-    { key: "dataPedido", label: "Data", type: "date" },
-    { key: "observacoes", label: "Observações", type: "textarea" },
-  ];
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <input placeholder="Buscar orçamento..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 300 }} />
-        <button onClick={openNew} style={btnPrimary}>+ Novo Orçamento</button>
-      </div>
-
-      <div style={cardStyle}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 4px" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>CLIENTE</th>
-                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>ITENS</th>
-                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>TOTAL</th>
-                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: "#8E8E93", borderBottom: "1px solid #E5E5EA" }}>AÇÕES</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={4} style={{ textAlign: "center", padding: 40, color: "#8E8E93" }}>Nenhum orçamento pendente</td></tr>
-              ) : filtered.map((row, i) => (
-                <tr key={row.id} style={{ background: i % 2 === 0 ? "#F9F9F9" : "transparent" }}>
-                  <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA" }}>
-                    {row.clienteId ? data.clientes.find(c => c.id === row.clienteId)?.nome : "N/A"}
-                  </td>
-                  <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA" }}>
-                    {(row.itens || []).map(it => `${it.produto} (${it.quantidade})`).join(", ")}
-                  </td>
-                  <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", fontFamily: "'Space Mono', monospace", fontWeight: 600 }}>
-                    R$ {(row.valorTotal || 0).toFixed(2)}
-                  </td>
-                  <td style={{ textAlign: "right", padding: "12px 14px", borderBottom: "1px solid rgba(99,102,241,0.05)" }}>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                      <button onClick={() => handleApprove(row)} style={{ ...btnPrimary, background: "#34C759", padding: "6px 12px", fontSize: 11 }}>✔ Aprovar</button>
-                      <button onClick={() => openEdit(row)} style={{ ...btnSecondary, padding: "6px 12px", fontSize: 11 }}>Editar</button>
-                      <button onClick={() => handleDelete(row.id)} style={{ ...btnSecondary, padding: "6px 12px", fontSize: 11, color: "#FF3B30" }}>✕</button>
-                    </div>
-                  </td>
-                </tr>
+        {showModal && (
+          <Modal title={editItem ? `Editar ${title.slice(0, -1)}` : `Novo ${title.slice(0, -1)}`} onClose={() => setShowModal(false)} width={1000}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {fields.filter(f => !f.hiddenInForm && f.type !== "pricing").map(f => (
+                <div key={f.key} style={f.type === "textarea" || f.type === "composition" ? { gridColumn: "1 / -1" } : {}}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      {showModal && (
-        <Modal title={editItem ? "Editar Orçamento" : "Novo Orçamento"} onClose={() => setShowModal(false)} width={600}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {orcamentoFields.map(f => (
-              <div key={f.key} style={f.type === "textarea" || f.key === "itens" ? { gridColumn: "1 / -1" } : {}}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} />
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// PEDIDOS MODULE
-// ============================================================
-function PedidosModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [search, setSearch] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-  const [filterStatus, setFilterStatus] = useState("todos");
-
-  const statuses = ["orcamento", "aprovado", "producao", "acabamento", "enviado", "entregue", "cancelado"];
-  const filtered = data.pedidos.filter(p => {
-    const matchSearch = JSON.stringify(p).toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "todos" || p.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
-
-  const openNew = () => { setEditItem(null); setForm({ status: "orcamento", dataPedido: new Date().toISOString().split("T")[0], itens: [] }); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
-  const handleChange = (key, val) => {
-    setForm(prev => {
-      const next = { ...prev, [key]: val };
-      if (key === "itens") {
-        next.valorTotal = val.reduce((acc, item) => acc + ((item.quantidade || 0) * (item.valorUnitario || 0)), 0);
-      }
-      return next;
-    });
-  };
-
-  const handleSave = () => {
-    setData(prev => {
-      let newMaterials = [...prev.materiais];
-      let msg = editItem ? "Pedido atualizado!" : "Pedido criado!";
-
-      const consumingStatuses = ["aprovado", "producao", "imprimindo", "acabamento", "enviado", "entregue", "concluido", "posProcessamento"];
-      const isConsuming = (s) => consumingStatuses.includes(s);
-
-      // STOCK MANAGEMENT LOGIC
-      // 1. If Creating NEW order directly as Consuming -> Deduct
-      // 2. If Updating:
-      //    a. Non-Consuming -> Consuming: Deduct
-      //    b. Consuming -> Non-Consuming: Refund
-      //    c. Consuming -> Consuming: Need to check if items changed... (Advanced: skipping for now, assume status change is primary trigger)
-      //       Ideally we refund old items and deduct new ones, but let's stick to status transitions for safety first.
-
-      const oldStatus = editItem ? editItem.status : "orcamento";
-      const newStatus = form.status;
-
-      let stockAction = null; // 'deduct', 'refund', or null
-      if (editItem) {
-        if (!isConsuming(oldStatus) && isConsuming(newStatus)) stockAction = 'deduct';
-        else if (isConsuming(oldStatus) && !isConsuming(newStatus)) stockAction = 'refund';
-      } else {
-        if (isConsuming(newStatus)) stockAction = 'deduct';
-      }
-
-      if (stockAction && form.itens) {
-        let log = [];
-        form.itens.forEach(orderItem => {
-          let produto = prev.produtos.find(p => p.nome === orderItem.produto);
-          if (!produto) produto = prev.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
-
-          if (produto && produto.composicao) {
-            produto.composicao.forEach(comp => {
-              const qtd = (comp.peso || 0) * (orderItem.quantidade || 0);
-
-              // Robust Lookup
-              let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-              if (matIndex === -1 && comp.tipo && comp.cor) {
-                const targetType = (comp.tipo || "").toLowerCase().trim();
-                const targetColor = (comp.cor || "").toLowerCase().trim();
-                matIndex = newMaterials.findIndex(m => {
-                  const mType = (m.tipo || "").toLowerCase().trim();
-                  const mColor = (m.cor || "").toLowerCase().trim();
-                  if (mType === targetType && mColor === targetColor) return true;
-                  const mName = (m.nome || "").toLowerCase();
-                  if (mName.includes(targetType) && mName.includes(targetColor)) return true;
-                  return false;
-                });
-              }
-
-              if (matIndex >= 0) {
-                const current = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
-                if (stockAction === 'deduct') {
-                  newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, current - qtd) };
-                  log.push(`-${qtd}g ${newMaterials[matIndex].nome}`);
-                } else {
-                  const maxStock = newMaterials[matIndex].quantidadeTotal || 1000;
-                  newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.min(maxStock, current + qtd) };
-                  log.push(`+${qtd}g ${newMaterials[matIndex].nome}`);
-                }
-              }
-            });
-          }
-        });
-        if (log.length > 0) msg += ` (Estoque: ${log.join(", ")})`;
-      }
-
-      // FINANCE LOGIC: Create Receivable if moving to Consuming Status (e.g. Aprovado) 
-      let newFinanceiro = { ...prev.financeiro };
-      if (stockAction === 'deduct') {
-        const tempId = editItem ? editItem.id : null;
-        // For new items, we can't easily guess the ID here without refactoring `generateId`. 
-        // BUT, we can rely on text description or handle it for `editItem` primarily.
-        // Refactoring to ensure ID is stable:
-
-        const finalId = editItem ? editItem.id : generateId();
-        const clientName = prev.clientes.find(c => c.id === form.clienteId)?.nome || "Cliente";
-
-        const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${finalId}`));
-        if (!billExists) {
-          newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
-            id: generateId(),
-            descricao: `Pedido #${finalId} - ${clientName}`,
-            valor: parseFloat(form.valorTotal || 0),
-            dataVencimento: new Date().toISOString().split('T')[0],
-            status: "pendente",
-            formaPagamento: form.formaPagamento || "PIX"
-          }];
-          msg += " + Conta Gerada";
-        }
-
-        // Return with specified ID to ensure consistency
-        if (editItem) {
-          return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: prev.pedidos.map(i => i.id === finalId ? { ...form, id: finalId } : i) };
-        } else {
-          return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: [...prev.pedidos, { ...form, id: finalId }] };
-        }
-      }
-
-      if (editItem) {
-        return {
-          ...prev,
-          materiais: newMaterials,
-          pedidos: prev.pedidos.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i)
-        };
-      } else {
-        return {
-          ...prev,
-          materiais: newMaterials,
-          pedidos: [...prev.pedidos, { ...form, id: generateId() }]
-        };
-      }
-    });
-
-    // Toast needs to be called after render or via effect, but here we can just show generic success
-    // Since we are inside setState updater, we can't reliably get the msg out to showToast immediately with dynamic content easily without refactoring.
-    // We will just show a generic toast outside.
-    showToast(editItem ? "Pedido atualizado!" : "Pedido criado!");
-    setShowModal(false);
-  };
-
-  const handleDelete = (id) => {
-    if (!window.confirm("Tem certeza que deseja excluir este pedido?")) return;
-
-    setData(prev => {
-      const order = prev.pedidos.find(p => p.id === id);
-      let newMaterials = [...prev.materiais];
-
-      // Restore stock if order was in a status that consumed stock
-      const consumedStockStatuses = ["aprovado", "producao", "acabamento", "enviado", "entregue"];
-      if (order && consumedStockStatuses.includes(order.status) && order.itens) {
-        order.itens.forEach(orderItem => {
-          // Find product (robust lookup)
-          let product = prev.produtos.find(p => p.nome === orderItem.produto);
-          if (!product) {
-            product = prev.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
-          }
-
-          if (product && product.composicao) {
-            product.composicao.forEach(comp => {
-              // 1. Try to find by ID
-              let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-
-              // 2. Fallback: Type/Color
-              if (matIndex === -1 && comp.tipo && comp.cor) {
-                const targetType = (comp.tipo || "").toLowerCase().trim();
-                const targetColor = (comp.cor || "").toLowerCase().trim();
-
-                matIndex = newMaterials.findIndex(m => {
-                  const mType = (m.tipo || "").toLowerCase().trim();
-                  const mColor = (m.cor || "").toLowerCase().trim();
-                  if (mType === targetType && mColor === targetColor) return true;
-
-                  const mName = (m.nome || "").toLowerCase();
-                  if (mName.includes(targetType) && mName.includes(targetColor)) return true;
-                  return false;
-                });
-              }
-
-              if (matIndex >= 0) {
-                const returnAmount = (comp.peso || 0) * (orderItem.quantidade || 0);
-                const maxStock = newMaterials[matIndex].quantidadeTotal || 1000;
-                newMaterials[matIndex] = {
-                  ...newMaterials[matIndex],
-                  quantidadeAtual: Math.min(maxStock, (newMaterials[matIndex].quantidadeAtual || 0) + returnAmount)
-                };
-              }
-            });
-          }
-        });
-        showToast("Estoque restaurado e pedido excluído", "warning");
-      } else {
-        showToast("Pedido excluído", "warning");
-      }
-
-      return {
-        ...prev,
-        materiais: newMaterials,
-        pedidos: prev.pedidos.filter(i => i.id !== id)
-      };
-    });
-  };
-
-  const pedidoFields = [
-    { key: "clienteId", label: "Cliente", type: "select", options: data.clientes.map(c => ({ label: c.nome, value: c.id })) },
-    { key: "itens", label: "Produtos", type: "orderItems" },
-    { key: "status", label: "Status", type: "select", options: statuses },
-    { key: "dataPedido", label: "Data do Pedido", type: "date" },
-    { key: "dataEntrega", label: "Data Entrega Prevista", type: "date" },
-    { key: "formaPagamento", label: "Forma de Pagamento", type: "select", options: ["PIX", "Cartão", "Cartão 2x", "Cartão 3x", "Boleto", "Dinheiro"] },
-    { key: "observacoes", label: "Observações", type: "textarea" },
-  ];
-
-  const columns = [
-    {
-      key: "itens", label: "", width: 50, render: (v, r) => {
-        const prodName = r.itens?.[0]?.produto;
-        const prod = data.produtos.find(p => p.nome === prodName);
-        return (
-          <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: "#F2F2F7", border: "1px solid #E5E5EA" }}>
-            <img src={prod?.imagemUrl || "https://placehold.co/40x40?text=..."} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          </div>
-        );
-      }
-    },
-    {
-      key: "itens", label: "Produtos", render: (v, r) => (
-        <div>
-          <div style={{ fontWeight: 500, color: "#1C1C1E" }}>{r.itens?.[0]?.produto || "Sem produtos"}</div>
-          {r.itens?.length > 1 && <div style={{ fontSize: 11, color: "#8E8E93" }}>+ {r.itens.length - 1} outros item(s)</div>}
-        </div>
-      )
-    },
-    { key: "valorTotal", label: "Total", render: (v) => <span style={{ fontFamily: "'Space Mono', monospace", fontWeight: 600 }}>R$ {(v || 0).toFixed(2)}</span> },
-    { key: "status", label: "Status", render: (v) => <StatusBadge status={v} /> },
-    { key: "dataPedido", label: "Data", render: v => new Date(v).toLocaleDateString("pt-BR") },
-    { key: "formaPagamento", label: "Pagamento" },
-  ];
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 250 }} />
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inputStyle, maxWidth: 180 }}>
-            <option value="todos">Todos os Status</option>
-            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        <button onClick={openNew} style={btnPrimary}>+ Novo Pedido</button>
-      </div>
-
-      {/* STATUS PIPELINE */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
-        {statuses.map(s => {
-          const count = data.pedidos.filter(p => p.status === s).length;
-          return (
-            <div key={s} onClick={() => setFilterStatus(s === filterStatus ? "todos" : s)} style={{
-              ...cardStyle, padding: "10px 16px", cursor: "pointer", minWidth: 120, textAlign: "center",
-              border: filterStatus === s ? "1px solid rgba(99,102,241,0.5)" : cardStyle.border,
-              background: filterStatus === s ? "rgba(99,102,241,0.1)" : cardStyle.background,
-            }}>
-              <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#a5b4fc" }}>{count}</div>
-              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase" }}>{s}</div>
+              {/* Render Pricing Widget at the bottom */}
+              {fields.filter(f => f.type === "pricing").map(f => (
+                <div key={f.key} style={{ gridColumn: "1 / -1", marginTop: 16 }}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />
+                </div>
+              ))}
             </div>
-          );
-        })}
-      </div>
-
-      <div style={cardStyle}>
-        <DataTable columns={columns} data={filtered} onEdit={openEdit} onDelete={handleDelete} />
-      </div>
-
-      {showModal && (
-        <Modal title={editItem ? "Editar Pedido" : "Novo Pedido"} onClose={() => setShowModal(false)} width={640}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {pedidoFields.map(f => (
-              <div key={f.key} style={f.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} />
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// PRODUÇÃO MODULE
-// ============================================================
-function ProducaoModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-
-  const statuses = ["fila", "imprimindo", "posProcessamento", "concluido", "falha"];
-
-  const openNew = () => { setEditItem(null); setForm({ status: "fila", falhas: 0, pesoUsado: 0 }); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
-  const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
-
-  const handleSave = () => {
-    if (editItem) {
-      setData(prev => ({ ...prev, producao: prev.producao.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
-      showToast("Produção atualizada!");
-    } else {
-      setData(prev => ({ ...prev, producao: [...prev.producao, { ...form, id: generateId() }] }));
-      showToast("Item de produção criado!");
-    }
-    setShowModal(false);
-  };
-
-  const handleDelete = (id) => {
-    setData(prev => ({ ...prev, producao: prev.producao.filter(i => i.id !== id) }));
-    showToast("Removido da produção", "warning");
-  };
-
-  const producaoFields = [
-    { key: "pedidoRef", label: "Referência do Pedido", type: "text", required: true },
-    { key: "impressora", label: "Impressora", type: "select", options: data.impressoras.map(i => i.nome) },
-    { key: "status", label: "Status", type: "select", options: statuses },
-    { key: "material", label: "Material", type: "select", options: data.materiais.map(m => m.nome) },
-    { key: "pesoUsado", label: "Peso Material (g)", type: "number" },
-    { key: "falhas", label: "Nº de Falhas", type: "number" },
-    { key: "inicio", label: "Início", type: "text" },
-    { key: "previsaoFim", label: "Previsão de Término", type: "text" },
-    { key: "etapaPosProc", label: "Pós-Processamento", type: "select", options: ["nenhuma", "lixamento", "pintura", "montagem", "acabamento geral"] },
-    { key: "observacoes", label: "Observações", type: "textarea" },
-  ];
-
-  const columns = [
-    { key: "pedidoRef", label: "Referência" },
-    { key: "impressora", label: "Impressora" },
-    { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
-    { key: "material", label: "Material" },
-    { key: "falhas", label: "Falhas", render: v => v > 0 ? <Badge color="#ef4444">{v}</Badge> : <span style={{ color: "#64748b" }}>0</span> },
-    { key: "etapaPosProc", label: "Pós-Proc." },
-  ];
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      {/* STATUS OVERVIEW */}
-      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
-        {statuses.map(s => {
-          const count = data.producao.filter(p => p.status === s).length;
-          const colors = { fila: "#8E8E93", imprimindo: "#FF9F0A", posProcessamento: "#BF5AF2", concluido: "#30D158", falha: "#FF453A" };
-          return (
-            <div key={s} style={{ ...cardStyle, padding: "14px 20px", textAlign: "center", minWidth: 130, borderLeft: `3px solid ${colors[s]}` }}>
-              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "inherit", color: colors[s] }}>{count}</div>
-              <div style={{ fontSize: 11, color: "#86868b", textTransform: "uppercase", letterSpacing: 0.5 }}>{s === "posProcessamento" ? "Pós-Proc." : s}</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24, paddingTop: 16, borderTop: "1px solid #E5E5EA" }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
             </div>
-          );
-        })}
+          </Modal>
+        )}
       </div>
+    );
+  }
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button onClick={openNew} style={btnPrimary}>+ Nova Impressão</button>
-      </div>
+  // ============================================================
+  // ORCAMENTOS MODULE
+  // ============================================================
+  function OrcamentosModule() {
+    const { data, setData, showToast, navigationData, setNavigationData } = useContext(AppContext);
+    const [search, setSearch] = useState("");
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
 
-      <div style={cardStyle}>
-        <DataTable columns={columns} data={data.producao} onEdit={openEdit} onDelete={handleDelete} />
-      </div>
+    // Check for navigation data (pre-fill)
+    useEffect(() => {
+      if (navigationData && navigationData.action === "new" && navigationData.product) {
+        const prod = navigationData.product;
+        setEditItem(null);
+        setForm({
+          status: "orcamento",
+          dataPedido: new Date().toISOString().split("T")[0],
+          itens: [{ produto: prod.nome, quantidade: 1, valorUnitario: prod.preco }],
+          valorTotal: prod.preco // Initial total
+        });
+        setShowModal(true);
+        setNavigationData(null); // Clear after using
+      }
+    }, [navigationData]);
 
-      {showModal && (
-        <Modal title={editItem ? "Editar Produção" : "Nova Impressão"} onClose={() => setShowModal(false)} width={640}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {producaoFields.map(f => (
-              <div key={f.key} style={f.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} />
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
+    const filtered = data.pedidos.filter(p =>
+      p.status === "orcamento" &&
+      JSON.stringify(p).toLowerCase().includes(search.toLowerCase())
+    );
 
-// ============================================================
-// KANBAN MODULE
-// ============================================================
-function KanbanModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [draggedItem, setDraggedItem] = useState(null);
+    const openNew = () => { setEditItem(null); setForm({ status: "orcamento", dataPedido: new Date().toISOString().split("T")[0], itens: [] }); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
 
-  // Define Kanban Columns and their allowed statuses
-  const columns = [
-    { title: "A Fazer 📝", statuses: ["orcamento", "aprovado", "fila"], color: "#8E8E93" },
-    { title: "Em Produção ⚙️", statuses: ["producao", "imprimindo"], color: "#007AFF" },
-    { title: "Acabamento 🎨", statuses: ["acabamento", "posProcessamento"], color: "#AF52DE" },
-    { title: "Pronto / Enviado ✅", statuses: ["concluido", "enviado", "entregue"], color: "#34C759" },
-  ];
+    const handleChange = (key, val) => {
+      setForm(prev => {
+        const next = { ...prev, [key]: val };
+        // Auto calc total from items
+        if (key === "itens") {
+          next.valorTotal = val.reduce((acc, item) => acc + ((item.quantidade || 0) * (item.valorUnitario || 0)), 0);
+        }
+        return next;
+      });
+    };
 
-  const handleDragStart = (e, item) => {
-    setDraggedItem(item);
-    e.dataTransfer.effectAllowed = "move";
-    // Transparent drag image hack
-    const img = new Image();
-    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-    e.dataTransfer.setDragImage(img, 0, 0);
-  };
+    const handleSave = () => {
+      if (editItem) {
+        setData(prev => ({ ...prev, pedidos: prev.pedidos.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
+        showToast("Orçamento atualizado!");
+      } else {
+        setData(prev => ({ ...prev, pedidos: [...prev.pedidos, { ...form, id: generateId() }] }));
+        showToast("Orçamento criado!");
+      }
+      setShowModal(false);
+    };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  };
+    const handleApprove = (item) => {
+      setData(prev => {
+        // 1. Calculate new stock
+        let newMaterials = [...prev.materiais];
+        let newProducts = [...prev.produtos];
+        let stockUpdated = false;
 
-  const handleDrop = (e, targetStatus) => {
-    e.preventDefault();
-    if (!draggedItem) return;
-
-    // Determine target entity type based on dragged item (could be multiple in future)
-    // For now, we assume it's a 'pedido' or 'producao' item.
-    // If we want to move item to a general status of the column (first status in list)
-
-    // We update the item's status to the PRIMARY status of the target column
-    // Or if the column has multiple, we pick the first one as default drop target
-
-    const newStatus = targetStatus;
-
-    if (draggedItem.entity === "pedido") {
-      let updatedMaterials = [...data.materiais];
-      let newProducts = [...data.produtos];
-      let newFinanceiro = { ...data.financeiro, contasReceber: [...data.financeiro.contasReceber] };
-      let moveMsg = `Pedido movido para ${newStatus}`;
-
-      // STOCK DEDUCTION LOGIC
-      // Deduct ONLY if moving to a consuming state AND coming from a non-consuming state (e.g. orcamento)
-      // If status is 'aprovado', it means stock was already deducted by handleApprove.
-      const consumingStatuses = ["aprovado", "producao", "imprimindo", "acabamento", "enviado", "entregue", "concluido", "posProcessamento"];
-      const isConsuming = (s) => consumingStatuses.includes(s);
-
-      // Condition: Target is consuming, Source was NOT consuming (i.e. was 'orcamento' or 'fila')
-      if (isConsuming(newStatus) && !isConsuming(draggedItem.status)) {
-        let deductedLog = [];
-
-        // Loop through ALL items in the order
-        if (draggedItem.itens && draggedItem.itens.length > 0) {
-          draggedItem.itens.forEach(orderItem => {
+        if (item.itens && Array.isArray(item.itens)) {
+          item.itens.forEach(orderItem => {
+            // Find product index to update stock
             let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
             if (prodIndex === -1) prodIndex = newProducts.findIndex(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
 
-            let qtyToMake = orderItem.quantidade || 0;
+            let qtyNeeded = orderItem.quantidade || 0;
+            let qtyToMake = qtyNeeded;
 
             if (prodIndex >= 0) {
               const available = newProducts[prodIndex].estoqueAtual || 0;
+              // 1. Try to fulfill from Stock
               if (available > 0) {
-                const take = Math.min(qtyToMake, available);
-                qtyToMake -= take;
-                newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - take };
-                deductedLog.push(`${newProducts[prodIndex].nome}: -${take} (Estoque)`);
+                const qtyFromStock = Math.min(qtyNeeded, available);
+                qtyToMake = qtyNeeded - qtyFromStock;
+
+                newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - qtyFromStock };
+                if (qtyFromStock > 0) showToast(`${qtyFromStock} un de '${newProducts[prodIndex].nome}' via Estoque`, "info");
               }
 
+              // 2. Manufacture remainder
               if (qtyToMake > 0 && newProducts[prodIndex].composicao) {
                 newProducts[prodIndex].composicao.forEach(comp => {
-                  const totalGramsNeeded = (comp.peso || 0) * qtyToMake;
-                  // Robust Lookup
-                  let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-                  if (stockIndex === -1 && comp.tipo && comp.cor) {
-                    const targetType = (comp.tipo || "").toLowerCase().trim();
-                    const targetColor = (comp.cor || "").toLowerCase().trim();
-                    stockIndex = updatedMaterials.findIndex(m => {
+                  let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                  if (matIndex === -1 && comp.tipo && comp.cor) {
+                    // Fallback lookup
+                    const tType = (comp.tipo || "").toLowerCase().trim();
+                    const tColor = (comp.cor || "").toLowerCase().trim();
+                    matIndex = newMaterials.findIndex(m => {
                       const mT = (m.tipo || "").toLowerCase().trim();
                       const mC = (m.cor || "").toLowerCase().trim();
                       return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
                     });
                   }
 
-                  if (stockIndex >= 0) {
-                    updatedMaterials[stockIndex] = { ...updatedMaterials[stockIndex], quantidadeAtual: Math.max(0, updatedMaterials[stockIndex].quantidadeAtual - totalGramsNeeded) };
-                    deductedLog.push(`${updatedMaterials[stockIndex].nome}: -${totalGramsNeeded}g`);
-                  } else {
-                    deductedLog.push(`FALTA: ${comp.tipo} ${comp.cor}`);
+                  if (matIndex >= 0) {
+                    // Deduct based on qtyToMake
+                    const deductAmount = (comp.peso || 0) * qtyToMake;
+                    const currentStock = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
+                    newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, currentStock - deductAmount) };
+                    stockUpdated = true;
                   }
                 });
               }
             }
           });
-          if (deductedLog.length > 0) moveMsg += `. Consumo: ${deductedLog.join(", ")}`;
         }
 
-        // FINANCE: Auto-generate Receivable on Kanban Drop
-        const billId = draggedItem.id;
-        const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${billId}`));
+        const updatedPedidos = prev.pedidos.map(i => i.id === item.id ? { ...i, status: "aprovado" } : i);
+
+        // FINANCE: Auto-generate Receivable on Approval
+        let newFinanceiro = { ...prev.financeiro };
+        const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${item.id}`));
 
         if (!billExists) {
-          const clientName = data.clientes.find(c => c.id === draggedItem.clienteId)?.nome || "Cliente";
-          newFinanceiro.contasReceber.push({
+          const clientName = prev.clientes.find(c => c.id === item.clienteId)?.nome || "Cliente";
+          newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
             id: generateId(),
-            descricao: `Pedido #${billId} - ${clientName}`,
-            valor: parseFloat(draggedItem.valorTotal || 0),
+            descricao: `Pedido #${item.id} - ${clientName}`,
+            valor: parseFloat(item.valorTotal || 0),
             dataVencimento: new Date().toISOString().split('T')[0],
             status: "pendente",
-            formaPagamento: draggedItem.formaPagamento || "PIX"
-          });
-          moveMsg += " + Conta Gerada";
+            formaPagamento: item.formaPagamento || "PIX"
+          }];
+          showToast("Conta a receber gerada automaticamente!", "success");
         }
-      } else if (!isConsuming(newStatus) && isConsuming(draggedItem.status)) {
-        // REFUND LOGIC: Moving from Consuming -> Non-Consuming (e.g. Producao -> Orcamento)
-        let refundedLog = [];
 
-        if (draggedItem.itens && draggedItem.itens.length > 0) {
-          draggedItem.itens.forEach(orderItem => {
-            let produto = data.produtos.find(p => p.nome === orderItem.produto);
-            if (!produto) produto = data.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+        return {
+          ...prev,
+          materiais: newMaterials,
+          produtos: newProducts,
+          pedidos: updatedPedidos,
+          financeiro: newFinanceiro
+        };
+      });
+
+      showToast("Orçamento aprovado e estoque deduzido!", "success");
+    };
+
+    const handleDelete = (id) => {
+      setData(prev => ({ ...prev, pedidos: prev.pedidos.filter(i => i.id !== id) }));
+      showToast("Orçamento excluído", "warning");
+    };
+
+    const orcamentoFields = [
+      { key: "clienteId", label: "Cliente", type: "select", options: data.clientes.map(c => ({ label: c.nome, value: c.id })) },
+      { key: "itens", label: "Produtos", type: "orderItems" },
+      { key: "dataPedido", label: "Data", type: "date" },
+      { key: "observacoes", label: "Observações", type: "textarea" },
+    ];
+
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <input placeholder="Buscar orçamento..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 300 }} />
+          <button onClick={openNew} style={btnPrimary}>+ Novo Orçamento</button>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 4px" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>CLIENTE</th>
+                  <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>ITENS</th>
+                  <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: "#8E8E93", fontWeight: 600, borderBottom: "1px solid #E5E5EA" }}>TOTAL</th>
+                  <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: "#8E8E93", borderBottom: "1px solid #E5E5EA" }}>AÇÕES</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={4} style={{ textAlign: "center", padding: 40, color: "#8E8E93" }}>Nenhum orçamento pendente</td></tr>
+                ) : filtered.map((row, i) => (
+                  <tr key={row.id} style={{ background: i % 2 === 0 ? "#F9F9F9" : "transparent" }}>
+                    <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA" }}>
+                      {row.clienteId ? data.clientes.find(c => c.id === row.clienteId)?.nome : "N/A"}
+                    </td>
+                    <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA" }}>
+                      {(row.itens || []).map(it => `${it.produto} (${it.quantidade})`).join(", ")}
+                    </td>
+                    <td style={{ padding: "14px", fontSize: 14, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", fontFamily: "'Space Mono', monospace", fontWeight: 600 }}>
+                      R$ {(row.valorTotal || 0).toFixed(2)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 14px", borderBottom: "1px solid rgba(99,102,241,0.05)" }}>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button onClick={() => handleApprove(row)} style={{ ...btnPrimary, background: "#34C759", padding: "6px 12px", fontSize: 11 }}>✔ Aprovar</button>
+                        <button onClick={() => openEdit(row)} style={{ ...btnSecondary, padding: "6px 12px", fontSize: 11 }}>Editar</button>
+                        <button onClick={() => handleDelete(row.id)} style={{ ...btnSecondary, padding: "6px 12px", fontSize: 11, color: "#FF3B30" }}>✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {showModal && (
+          <Modal title={editItem ? "Editar Orçamento" : "Novo Orçamento"} onClose={() => setShowModal(false)} width={600}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {orcamentoFields.map(f => (
+                <div key={f.key} style={f.type === "textarea" || f.key === "itens" ? { gridColumn: "1 / -1" } : {}}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // PEDIDOS MODULE
+  // ============================================================
+  function PedidosModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [search, setSearch] = useState("");
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
+    const [filterStatus, setFilterStatus] = useState("todos");
+
+    const statuses = ["orcamento", "aprovado", "producao", "acabamento", "enviado", "entregue", "cancelado"];
+    const filtered = data.pedidos.filter(p => {
+      const matchSearch = JSON.stringify(p).toLowerCase().includes(search.toLowerCase());
+      const matchStatus = filterStatus === "todos" || p.status === filterStatus;
+      return matchSearch && matchStatus;
+    });
+
+    const openNew = () => { setEditItem(null); setForm({ status: "orcamento", dataPedido: new Date().toISOString().split("T")[0], itens: [] }); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+    const handleChange = (key, val) => {
+      setForm(prev => {
+        const next = { ...prev, [key]: val };
+        if (key === "itens") {
+          next.valorTotal = val.reduce((acc, item) => acc + ((item.quantidade || 0) * (item.valorUnitario || 0)), 0);
+        }
+        return next;
+      });
+    };
+
+    const handleSave = () => {
+      setData(prev => {
+        let newMaterials = [...prev.materiais];
+        let msg = editItem ? "Pedido atualizado!" : "Pedido criado!";
+
+        const consumingStatuses = ["aprovado", "producao", "imprimindo", "acabamento", "enviado", "entregue", "concluido", "posProcessamento"];
+        const isConsuming = (s) => consumingStatuses.includes(s);
+
+        // STOCK MANAGEMENT LOGIC
+        // 1. If Creating NEW order directly as Consuming -> Deduct
+        // 2. If Updating:
+        //    a. Non-Consuming -> Consuming: Deduct
+        //    b. Consuming -> Non-Consuming: Refund
+        //    c. Consuming -> Consuming: Need to check if items changed... (Advanced: skipping for now, assume status change is primary trigger)
+        //       Ideally we refund old items and deduct new ones, but let's stick to status transitions for safety first.
+
+        const oldStatus = editItem ? editItem.status : "orcamento";
+        const newStatus = form.status;
+
+        let stockAction = null; // 'deduct', 'refund', or null
+        if (editItem) {
+          if (!isConsuming(oldStatus) && isConsuming(newStatus)) stockAction = 'deduct';
+          else if (isConsuming(oldStatus) && !isConsuming(newStatus)) stockAction = 'refund';
+        } else {
+          if (isConsuming(newStatus)) stockAction = 'deduct';
+        }
+
+        if (stockAction && form.itens) {
+          let log = [];
+          form.itens.forEach(orderItem => {
+            let produto = prev.produtos.find(p => p.nome === orderItem.produto);
+            if (!produto) produto = prev.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
 
             if (produto && produto.composicao) {
               produto.composicao.forEach(comp => {
-                const returning = (comp.peso || 0) * (orderItem.quantidade || 0);
+                const qtd = (comp.peso || 0) * (orderItem.quantidade || 0);
 
-                // Robust Lookup (Refund)
-                let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-                if (stockIndex === -1 && comp.tipo && comp.cor) {
+                // Robust Lookup
+                let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                if (matIndex === -1 && comp.tipo && comp.cor) {
                   const targetType = (comp.tipo || "").toLowerCase().trim();
-                  const targetColor = (comp.cor || "").toLowerCase().trim(); // Fixed typo in previous step but checking here
-                  stockIndex = updatedMaterials.findIndex(m => {
+                  const targetColor = (comp.cor || "").toLowerCase().trim();
+                  matIndex = newMaterials.findIndex(m => {
                     const mType = (m.tipo || "").toLowerCase().trim();
                     const mColor = (m.cor || "").toLowerCase().trim();
                     if (mType === targetType && mColor === targetColor) return true;
@@ -3719,838 +3279,1303 @@ function KanbanModule() {
                   });
                 }
 
-                if (stockIndex >= 0) {
-                  const stockItem = updatedMaterials[stockIndex];
-                  const maxStock = stockItem.quantidadeTotal || 1000;
-                  updatedMaterials[stockIndex] = {
-                    ...stockItem,
-                    quantidadeAtual: Math.min(maxStock, (stockItem.quantidadeAtual || 0) + returning)
-                  };
-                  refundedLog.push(`${stockItem.nome}: +${returning}g`);
+                if (matIndex >= 0) {
+                  const current = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
+                  if (stockAction === 'deduct') {
+                    newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, current - qtd) };
+                    log.push(`-${qtd}g ${newMaterials[matIndex].nome}`);
+                  } else {
+                    const maxStock = newMaterials[matIndex].quantidadeTotal || 1000;
+                    newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.min(maxStock, current + qtd) };
+                    log.push(`+${qtd}g ${newMaterials[matIndex].nome}`);
+                  }
                 }
               });
             }
           });
-          if (refundedLog.length > 0) moveMsg += `. Estoque Estornado: ${refundedLog.join(", ")}`;
+          if (log.length > 0) msg += ` (Estoque: ${log.join(", ")})`;
         }
-      }
 
-      setData(prev => ({
-        ...prev,
-        financeiro: newFinanceiro,
-        produtos: newProducts,
-        pedidos: prev.pedidos.map(p => p.id === draggedItem.id ? { ...p, status: newStatus } : p),
-        materiais: updatedMaterials
-      }));
-      showToast(moveMsg);
-    }
-    // Add logic for production items if needed
+        // FINANCE LOGIC: Create Receivable if moving to Consuming Status (e.g. Aprovado) 
+        let newFinanceiro = { ...prev.financeiro };
+        if (stockAction === 'deduct') {
+          const tempId = editItem ? editItem.id : null;
+          // For new items, we can't easily guess the ID here without refactoring `generateId`. 
+          // BUT, we can rely on text description or handle it for `editItem` primarily.
+          // Refactoring to ensure ID is stable:
 
-    setDraggedItem(null);
-  };
+          const finalId = editItem ? editItem.id : generateId();
+          const clientName = prev.clientes.find(c => c.id === form.clienteId)?.nome || "Cliente";
 
-  return (
-    <div style={{ display: "flex", gap: 16, height: "100%", overflowX: "auto", paddingBottom: 16, animation: "fadeIn 0.4s ease" }}>
-      {columns.map((col, i) => (
-        <div key={i}
-          onDragOver={handleDragOver}
-          onDrop={(e) => handleDrop(e, col.statuses[0])}
-          style={{
-            flex: "0 0 300px",
-            background: "#F2F2F7",
-            borderRadius: 12,
-            border: "1px solid #E5E5EA",
-            display: "flex", flexDirection: "column",
-            maxHeight: "100%"
-          }}
-        >
-          {/* Header */}
-          <div style={{ padding: 16, borderBottom: "1px solid #E5E5EA", background: "#fff", borderTopLeftRadius: 12, borderTopRightRadius: 12, position: "sticky", top: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: col.color, textTransform: "uppercase", letterSpacing: 0.5 }}>{col.title}</div>
-            <div style={{ fontSize: 11, color: "#8E8E93" }}>
-              {data.pedidos.filter(p => col.statuses.includes(p.status)).length} itens
+          const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${finalId}`));
+          if (!billExists) {
+            newFinanceiro.contasReceber = [...newFinanceiro.contasReceber, {
+              id: generateId(),
+              descricao: `Pedido #${finalId} - ${clientName}`,
+              valor: parseFloat(form.valorTotal || 0),
+              dataVencimento: new Date().toISOString().split('T')[0],
+              status: "pendente",
+              formaPagamento: form.formaPagamento || "PIX"
+            }];
+            msg += " + Conta Gerada";
+          }
+
+          // Return with specified ID to ensure consistency
+          if (editItem) {
+            return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: prev.pedidos.map(i => i.id === finalId ? { ...form, id: finalId } : i) };
+          } else {
+            return { ...prev, materiais: newMaterials, financeiro: newFinanceiro, pedidos: [...prev.pedidos, { ...form, id: finalId }] };
+          }
+        }
+
+        if (editItem) {
+          return {
+            ...prev,
+            materiais: newMaterials,
+            pedidos: prev.pedidos.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i)
+          };
+        } else {
+          return {
+            ...prev,
+            materiais: newMaterials,
+            pedidos: [...prev.pedidos, { ...form, id: generateId() }]
+          };
+        }
+      });
+
+      // Toast needs to be called after render or via effect, but here we can just show generic success
+      // Since we are inside setState updater, we can't reliably get the msg out to showToast immediately with dynamic content easily without refactoring.
+      // We will just show a generic toast outside.
+      showToast(editItem ? "Pedido atualizado!" : "Pedido criado!");
+      setShowModal(false);
+    };
+
+    const handleDelete = (id) => {
+      if (!window.confirm("Tem certeza que deseja excluir este pedido?")) return;
+
+      setData(prev => {
+        const order = prev.pedidos.find(p => p.id === id);
+        let newMaterials = [...prev.materiais];
+
+        // Restore stock if order was in a status that consumed stock
+        const consumedStockStatuses = ["aprovado", "producao", "acabamento", "enviado", "entregue"];
+        if (order && consumedStockStatuses.includes(order.status) && order.itens) {
+          order.itens.forEach(orderItem => {
+            // Find product (robust lookup)
+            let product = prev.produtos.find(p => p.nome === orderItem.produto);
+            if (!product) {
+              product = prev.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+            }
+
+            if (product && product.composicao) {
+              product.composicao.forEach(comp => {
+                // 1. Try to find by ID
+                let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+
+                // 2. Fallback: Type/Color
+                if (matIndex === -1 && comp.tipo && comp.cor) {
+                  const targetType = (comp.tipo || "").toLowerCase().trim();
+                  const targetColor = (comp.cor || "").toLowerCase().trim();
+
+                  matIndex = newMaterials.findIndex(m => {
+                    const mType = (m.tipo || "").toLowerCase().trim();
+                    const mColor = (m.cor || "").toLowerCase().trim();
+                    if (mType === targetType && mColor === targetColor) return true;
+
+                    const mName = (m.nome || "").toLowerCase();
+                    if (mName.includes(targetType) && mName.includes(targetColor)) return true;
+                    return false;
+                  });
+                }
+
+                if (matIndex >= 0) {
+                  const returnAmount = (comp.peso || 0) * (orderItem.quantidade || 0);
+                  const maxStock = newMaterials[matIndex].quantidadeTotal || 1000;
+                  newMaterials[matIndex] = {
+                    ...newMaterials[matIndex],
+                    quantidadeAtual: Math.min(maxStock, (newMaterials[matIndex].quantidadeAtual || 0) + returnAmount)
+                  };
+                }
+              });
+            }
+          });
+          showToast("Estoque restaurado e pedido excluído", "warning");
+        } else {
+          showToast("Pedido excluído", "warning");
+        }
+
+        return {
+          ...prev,
+          materiais: newMaterials,
+          pedidos: prev.pedidos.filter(i => i.id !== id)
+        };
+      });
+    };
+
+    const pedidoFields = [
+      { key: "clienteId", label: "Cliente", type: "select", options: data.clientes.map(c => ({ label: c.nome, value: c.id })) },
+      { key: "itens", label: "Produtos", type: "orderItems" },
+      { key: "status", label: "Status", type: "select", options: statuses },
+      { key: "dataPedido", label: "Data do Pedido", type: "date" },
+      { key: "dataEntrega", label: "Data Entrega Prevista", type: "date" },
+      { key: "formaPagamento", label: "Forma de Pagamento", type: "select", options: ["PIX", "Cartão", "Cartão 2x", "Cartão 3x", "Boleto", "Dinheiro"] },
+      { key: "observacoes", label: "Observações", type: "textarea" },
+    ];
+
+    const columns = [
+      {
+        key: "itens", label: "", width: 50, render: (v, r) => {
+          const prodName = r.itens?.[0]?.produto;
+          const prod = data.produtos.find(p => p.nome === prodName);
+          return (
+            <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: "#F2F2F7", border: "1px solid #E5E5EA" }}>
+              <img src={prod?.imagemUrl || "https://placehold.co/40x40?text=..."} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             </div>
+          );
+        }
+      },
+      {
+        key: "itens", label: "Produtos", render: (v, r) => (
+          <div>
+            <div style={{ fontWeight: 500, color: "#1C1C1E" }}>{r.itens?.[0]?.produto || "Sem produtos"}</div>
+            {r.itens?.length > 1 && <div style={{ fontSize: 11, color: "#8E8E93" }}>+ {r.itens.length - 1} outros item(s)</div>}
           </div>
+        )
+      },
+      { key: "valorTotal", label: "Total", render: (v) => <span style={{ fontFamily: "'Space Mono', monospace", fontWeight: 600 }}>R$ {(v || 0).toFixed(2)}</span> },
+      { key: "status", label: "Status", render: (v) => <StatusBadge status={v} /> },
+      { key: "dataPedido", label: "Data", render: v => new Date(v).toLocaleDateString("pt-BR") },
+      { key: "formaPagamento", label: "Pagamento" },
+    ];
 
-          {/* Cards Container */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-            {data.pedidos.filter(p => col.statuses.includes(p.status)).map(item => {
-              // Get image of first product as representative
-              const firstProdName = item.itens && item.itens[0] ? item.itens[0].produto : "";
-              const prod = data.produtos.find(prod => prod.nome === firstProdName);
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <input placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, maxWidth: 250 }} />
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inputStyle, maxWidth: 180 }}>
+              <option value="todos">Todos os Status</option>
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <button onClick={openNew} style={btnPrimary}>+ Novo Pedido</button>
+        </div>
 
-              return (
-                <div
-                  key={item.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, { ...item, entity: "pedido" })} // Item now has full 'itens' array
-                  style={{
-                    background: "#fff",
-                    padding: 14,
-                    borderRadius: 10,
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-                    border: "1px solid #E5E5EA",
-                    cursor: "grab",
-                    opacity: draggedItem?.id === item.id ? 0.5 : 1,
-                    transform: draggedItem?.id === item.id ? "scale(0.98)" : "scale(1)",
-                    transition: "all 0.2s"
-                  }}
-                >
-                  <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
-                    <img
-                      src={prod?.imagemUrl || "https://placehold.co/60x60?text=3D"}
-                      alt=""
-                      style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flexShrink: 0, background: "#F2F2F7" }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "#8E8E93" }}># {item.id.slice(0, 5).toUpperCase()}</span>
-                        <StatusBadge status={item.status} />
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1C1E", lineHeight: 1.2 }}>
-                        {item.itens && item.itens.length > 1 ? `${item.itens.length} Produtos` : firstProdName}
+        {/* STATUS PIPELINE */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
+          {statuses.map(s => {
+            const count = data.pedidos.filter(p => p.status === s).length;
+            return (
+              <div key={s} onClick={() => setFilterStatus(s === filterStatus ? "todos" : s)} style={{
+                ...cardStyle, padding: "10px 16px", cursor: "pointer", minWidth: 120, textAlign: "center",
+                border: filterStatus === s ? "1px solid rgba(99,102,241,0.5)" : cardStyle.border,
+                background: filterStatus === s ? "rgba(99,102,241,0.1)" : cardStyle.background,
+              }}>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#a5b4fc" }}>{count}</div>
+                <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase" }}>{s}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={cardStyle}>
+          <DataTable columns={columns} data={filtered} onEdit={openEdit} onDelete={handleDelete} />
+        </div>
+
+        {showModal && (
+          <Modal title={editItem ? "Editar Pedido" : "Novo Pedido"} onClose={() => setShowModal(false)} width={640}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {pedidoFields.map(f => (
+                <div key={f.key} style={f.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // PRODUÇÃO MODULE
+  // ============================================================
+  function ProducaoModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
+
+    const statuses = ["fila", "imprimindo", "posProcessamento", "concluido", "falha"];
+
+    const openNew = () => { setEditItem(null); setForm({ status: "fila", falhas: 0, pesoUsado: 0 }); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+    const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+
+    const handleSave = () => {
+      if (editItem) {
+        setData(prev => ({ ...prev, producao: prev.producao.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
+        showToast("Produção atualizada!");
+      } else {
+        setData(prev => ({ ...prev, producao: [...prev.producao, { ...form, id: generateId() }] }));
+        showToast("Item de produção criado!");
+      }
+      setShowModal(false);
+    };
+
+    const handleDelete = (id) => {
+      setData(prev => ({ ...prev, producao: prev.producao.filter(i => i.id !== id) }));
+      showToast("Removido da produção", "warning");
+    };
+
+    const producaoFields = [
+      { key: "pedidoRef", label: "Referência do Pedido", type: "text", required: true },
+      { key: "impressora", label: "Impressora", type: "select", options: data.impressoras.map(i => i.nome) },
+      { key: "status", label: "Status", type: "select", options: statuses },
+      { key: "material", label: "Material", type: "select", options: data.materiais.map(m => m.nome) },
+      { key: "pesoUsado", label: "Peso Material (g)", type: "number" },
+      { key: "falhas", label: "Nº de Falhas", type: "number" },
+      { key: "inicio", label: "Início", type: "text" },
+      { key: "previsaoFim", label: "Previsão de Término", type: "text" },
+      { key: "etapaPosProc", label: "Pós-Processamento", type: "select", options: ["nenhuma", "lixamento", "pintura", "montagem", "acabamento geral"] },
+      { key: "observacoes", label: "Observações", type: "textarea" },
+    ];
+
+    const columns = [
+      { key: "pedidoRef", label: "Referência" },
+      { key: "impressora", label: "Impressora" },
+      { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
+      { key: "material", label: "Material" },
+      { key: "falhas", label: "Falhas", render: v => v > 0 ? <Badge color="#ef4444">{v}</Badge> : <span style={{ color: "#64748b" }}>0</span> },
+      { key: "etapaPosProc", label: "Pós-Proc." },
+    ];
+
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        {/* STATUS OVERVIEW */}
+        <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
+          {statuses.map(s => {
+            const count = data.producao.filter(p => p.status === s).length;
+            const colors = { fila: "#8E8E93", imprimindo: "#FF9F0A", posProcessamento: "#BF5AF2", concluido: "#30D158", falha: "#FF453A" };
+            return (
+              <div key={s} style={{ ...cardStyle, padding: "14px 20px", textAlign: "center", minWidth: 130, borderLeft: `3px solid ${colors[s]}` }}>
+                <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "inherit", color: colors[s] }}>{count}</div>
+                <div style={{ fontSize: 11, color: "#86868b", textTransform: "uppercase", letterSpacing: 0.5 }}>{s === "posProcessamento" ? "Pós-Proc." : s}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <button onClick={openNew} style={btnPrimary}>+ Nova Impressão</button>
+        </div>
+
+        <div style={cardStyle}>
+          <DataTable columns={columns} data={data.producao} onEdit={openEdit} onDelete={handleDelete} />
+        </div>
+
+        {showModal && (
+          <Modal title={editItem ? "Editar Produção" : "Nova Impressão"} onClose={() => setShowModal(false)} width={640}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {producaoFields.map(f => (
+                <div key={f.key} style={f.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // KANBAN MODULE
+  // ============================================================
+  function KanbanModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [draggedItem, setDraggedItem] = useState(null);
+
+    // Define Kanban Columns and their allowed statuses
+    const columns = [
+      { title: "A Fazer 📝", statuses: ["orcamento", "aprovado", "fila"], color: "#8E8E93" },
+      { title: "Em Produção ⚙️", statuses: ["producao", "imprimindo"], color: "#007AFF" },
+      { title: "Acabamento 🎨", statuses: ["acabamento", "posProcessamento"], color: "#AF52DE" },
+      { title: "Pronto / Enviado ✅", statuses: ["concluido", "enviado", "entregue"], color: "#34C759" },
+    ];
+
+    const handleDragStart = (e, item) => {
+      setDraggedItem(item);
+      e.dataTransfer.effectAllowed = "move";
+      // Transparent drag image hack
+      const img = new Image();
+      img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      e.dataTransfer.setDragImage(img, 0, 0);
+    };
+
+    const handleDragOver = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    };
+
+    const handleDrop = (e, targetStatus) => {
+      e.preventDefault();
+      if (!draggedItem) return;
+
+      // Determine target entity type based on dragged item (could be multiple in future)
+      // For now, we assume it's a 'pedido' or 'producao' item.
+      // If we want to move item to a general status of the column (first status in list)
+
+      // We update the item's status to the PRIMARY status of the target column
+      // Or if the column has multiple, we pick the first one as default drop target
+
+      const newStatus = targetStatus;
+
+      if (draggedItem.entity === "pedido") {
+        let updatedMaterials = [...data.materiais];
+        let newProducts = [...data.produtos];
+        let newFinanceiro = { ...data.financeiro, contasReceber: [...data.financeiro.contasReceber] };
+        let moveMsg = `Pedido movido para ${newStatus}`;
+
+        // STOCK DEDUCTION LOGIC
+        // Deduct ONLY if moving to a consuming state AND coming from a non-consuming state (e.g. orcamento)
+        // If status is 'aprovado', it means stock was already deducted by handleApprove.
+        const consumingStatuses = ["aprovado", "producao", "imprimindo", "acabamento", "enviado", "entregue", "concluido", "posProcessamento"];
+        const isConsuming = (s) => consumingStatuses.includes(s);
+
+        // Condition: Target is consuming, Source was NOT consuming (i.e. was 'orcamento' or 'fila')
+        if (isConsuming(newStatus) && !isConsuming(draggedItem.status)) {
+          let deductedLog = [];
+
+          // Loop through ALL items in the order
+          if (draggedItem.itens && draggedItem.itens.length > 0) {
+            draggedItem.itens.forEach(orderItem => {
+              let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
+              if (prodIndex === -1) prodIndex = newProducts.findIndex(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+
+              let qtyToMake = orderItem.quantidade || 0;
+
+              if (prodIndex >= 0) {
+                const available = newProducts[prodIndex].estoqueAtual || 0;
+                if (available > 0) {
+                  const take = Math.min(qtyToMake, available);
+                  qtyToMake -= take;
+                  newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - take };
+                  deductedLog.push(`${newProducts[prodIndex].nome}: -${take} (Estoque)`);
+                }
+
+                if (qtyToMake > 0 && newProducts[prodIndex].composicao) {
+                  newProducts[prodIndex].composicao.forEach(comp => {
+                    const totalGramsNeeded = (comp.peso || 0) * qtyToMake;
+                    // Robust Lookup
+                    let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                    if (stockIndex === -1 && comp.tipo && comp.cor) {
+                      const targetType = (comp.tipo || "").toLowerCase().trim();
+                      const targetColor = (comp.cor || "").toLowerCase().trim();
+                      stockIndex = updatedMaterials.findIndex(m => {
+                        const mT = (m.tipo || "").toLowerCase().trim();
+                        const mC = (m.cor || "").toLowerCase().trim();
+                        return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
+                      });
+                    }
+
+                    if (stockIndex >= 0) {
+                      updatedMaterials[stockIndex] = { ...updatedMaterials[stockIndex], quantidadeAtual: Math.max(0, updatedMaterials[stockIndex].quantidadeAtual - totalGramsNeeded) };
+                      deductedLog.push(`${updatedMaterials[stockIndex].nome}: -${totalGramsNeeded}g`);
+                    } else {
+                      deductedLog.push(`FALTA: ${comp.tipo} ${comp.cor}`);
+                    }
+                  });
+                }
+              }
+            });
+            if (deductedLog.length > 0) moveMsg += `. Consumo: ${deductedLog.join(", ")}`;
+          }
+
+          // FINANCE: Auto-generate Receivable on Kanban Drop
+          const billId = draggedItem.id;
+          const billExists = newFinanceiro.contasReceber.some(c => c.descricao && c.descricao.includes(`Pedido #${billId}`));
+
+          if (!billExists) {
+            const clientName = data.clientes.find(c => c.id === draggedItem.clienteId)?.nome || "Cliente";
+            newFinanceiro.contasReceber.push({
+              id: generateId(),
+              descricao: `Pedido #${billId} - ${clientName}`,
+              valor: parseFloat(draggedItem.valorTotal || 0),
+              dataVencimento: new Date().toISOString().split('T')[0],
+              status: "pendente",
+              formaPagamento: draggedItem.formaPagamento || "PIX"
+            });
+            moveMsg += " + Conta Gerada";
+          }
+        } else if (!isConsuming(newStatus) && isConsuming(draggedItem.status)) {
+          // REFUND LOGIC: Moving from Consuming -> Non-Consuming (e.g. Producao -> Orcamento)
+          let refundedLog = [];
+
+          if (draggedItem.itens && draggedItem.itens.length > 0) {
+            draggedItem.itens.forEach(orderItem => {
+              let produto = data.produtos.find(p => p.nome === orderItem.produto);
+              if (!produto) produto = data.produtos.find(p => p.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+
+              if (produto && produto.composicao) {
+                produto.composicao.forEach(comp => {
+                  const returning = (comp.peso || 0) * (orderItem.quantidade || 0);
+
+                  // Robust Lookup (Refund)
+                  let stockIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+                  if (stockIndex === -1 && comp.tipo && comp.cor) {
+                    const targetType = (comp.tipo || "").toLowerCase().trim();
+                    const targetColor = (comp.cor || "").toLowerCase().trim(); // Fixed typo in previous step but checking here
+                    stockIndex = updatedMaterials.findIndex(m => {
+                      const mType = (m.tipo || "").toLowerCase().trim();
+                      const mColor = (m.cor || "").toLowerCase().trim();
+                      if (mType === targetType && mColor === targetColor) return true;
+                      const mName = (m.nome || "").toLowerCase();
+                      if (mName.includes(targetType) && mName.includes(targetColor)) return true;
+                      return false;
+                    });
+                  }
+
+                  if (stockIndex >= 0) {
+                    const stockItem = updatedMaterials[stockIndex];
+                    const maxStock = stockItem.quantidadeTotal || 1000;
+                    updatedMaterials[stockIndex] = {
+                      ...stockItem,
+                      quantidadeAtual: Math.min(maxStock, (stockItem.quantidadeAtual || 0) + returning)
+                    };
+                    refundedLog.push(`${stockItem.nome}: +${returning}g`);
+                  }
+                });
+              }
+            });
+            if (refundedLog.length > 0) moveMsg += `. Estoque Estornado: ${refundedLog.join(", ")}`;
+          }
+        }
+
+        setData(prev => ({
+          ...prev,
+          financeiro: newFinanceiro,
+          produtos: newProducts,
+          pedidos: prev.pedidos.map(p => p.id === draggedItem.id ? { ...p, status: newStatus } : p),
+          materiais: updatedMaterials
+        }));
+        showToast(moveMsg);
+      }
+      // Add logic for production items if needed
+
+      setDraggedItem(null);
+    };
+
+    return (
+      <div style={{ display: "flex", gap: 16, height: "100%", overflowX: "auto", paddingBottom: 16, animation: "fadeIn 0.4s ease" }}>
+        {columns.map((col, i) => (
+          <div key={i}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, col.statuses[0])}
+            style={{
+              flex: "0 0 300px",
+              background: "#F2F2F7",
+              borderRadius: 12,
+              border: "1px solid #E5E5EA",
+              display: "flex", flexDirection: "column",
+              maxHeight: "100%"
+            }}
+          >
+            {/* Header */}
+            <div style={{ padding: 16, borderBottom: "1px solid #E5E5EA", background: "#fff", borderTopLeftRadius: 12, borderTopRightRadius: 12, position: "sticky", top: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: col.color, textTransform: "uppercase", letterSpacing: 0.5 }}>{col.title}</div>
+              <div style={{ fontSize: 11, color: "#8E8E93" }}>
+                {data.pedidos.filter(p => col.statuses.includes(p.status)).length} itens
+              </div>
+            </div>
+
+            {/* Cards Container */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              {data.pedidos.filter(p => col.statuses.includes(p.status)).map(item => {
+                // Get image of first product as representative
+                const firstProdName = item.itens && item.itens[0] ? item.itens[0].produto : "";
+                const prod = data.produtos.find(prod => prod.nome === firstProdName);
+
+                return (
+                  <div
+                    key={item.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, { ...item, entity: "pedido" })} // Item now has full 'itens' array
+                    style={{
+                      background: "#fff",
+                      padding: 14,
+                      borderRadius: 10,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                      border: "1px solid #E5E5EA",
+                      cursor: "grab",
+                      opacity: draggedItem?.id === item.id ? 0.5 : 1,
+                      transform: draggedItem?.id === item.id ? "scale(0.98)" : "scale(1)",
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
+                      <img
+                        src={prod?.imagemUrl || "https://placehold.co/60x60?text=3D"}
+                        alt=""
+                        style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flexShrink: 0, background: "#F2F2F7" }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#8E8E93" }}># {item.id.slice(0, 5).toUpperCase()}</span>
+                          <StatusBadge status={item.status} />
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1C1E", lineHeight: 1.2 }}>
+                          {item.itens && item.itens.length > 1 ? `${item.itens.length} Produtos` : firstProdName}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>{item.clienteId ? data.clientes.find(c => c.id === item.clienteId)?.nome : "Cliente não ident."}</div>
+                    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>{item.clienteId ? data.clientes.find(c => c.id === item.clienteId)?.nome : "Cliente não ident."}</div>
 
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F2F2F7", paddingTop: 8 }}>
-                    <div style={{ fontSize: 11, color: "#8E8E93" }}>{new Date(item.dataPedido).toLocaleDateString()}</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#1C1C1E" }}>R$ {(item.valorTotal || 0).toFixed(2)}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F2F2F7", paddingTop: 8 }}>
+                      <div style={{ fontSize: 11, color: "#8E8E93" }}>{new Date(item.dataPedido).toLocaleDateString()}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1C1C1E" }}>R$ {(item.valorTotal || 0).toFixed(2)}</div>
+                    </div>
                   </div>
+                );
+              })}
+              {data.pedidos.filter(p => col.statuses.includes(p.status)).length === 0 && (
+                <div style={{ textAlign: "center", padding: 30, color: "#C7C7CC", fontSize: 12, fontStyle: "italic" }}>
+                  Vazio
                 </div>
-              );
-            })}
-            {data.pedidos.filter(p => col.statuses.includes(p.status)).length === 0 && (
-              <div style={{ textAlign: "center", padding: 30, color: "#C7C7CC", fontSize: 12, fontStyle: "italic" }}>
-                Vazio
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ============================================================
-// IMPRESSORAS MODULE
-// ============================================================
-function ImpressorasModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-
-  const openNew = () => { setEditItem(null); setForm({ status: "disponivel", horasUso: 0 }); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
-  const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
-
-  const handleSave = () => {
-    if (editItem) {
-      setData(prev => ({ ...prev, impressoras: prev.impressoras.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
-      showToast("Impressora atualizada!");
-    } else {
-      setData(prev => ({ ...prev, impressoras: [...prev.impressoras, { ...form, id: generateId() }] }));
-      showToast("Impressora cadastrada!");
-    }
-    setShowModal(false);
-  };
-
-  const handleDelete = (id) => {
-    setData(prev => ({ ...prev, impressoras: prev.impressoras.filter(i => i.id !== id) }));
-    showToast("Impressora removida", "warning");
-  };
-
-  const impFields = [
-    { key: "nome", label: "Nome/Apelido", type: "text", required: true },
-    { key: "modelo", label: "Modelo", type: "text" },
-    { key: "tipo", label: "Tipo", type: "select", options: ["FDM", "Resina", "SLS", "SLA"] },
-    { key: "status", label: "Status", type: "select", options: ["disponivel", "imprimindo", "manutencao"] },
-    { key: "horasUso", label: "Horas de Uso", type: "number" },
-    { key: "ultimaManutencao", label: "Última Manutenção", type: "text" },
-    { key: "observacoes", label: "Observações", type: "textarea" },
-  ];
-
-  const statusColors = { disponivel: "#34C759", imprimindo: "#FF9500", manutencao: "#FF3B30" };
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
-        <button onClick={openNew} style={btnPrimary}>+ Nova Impressora</button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-        {data.impressoras.map(imp => (
-          <div key={imp.id} style={{
-            ...cardStyle,
-            borderLeft: `4px solid ${statusColors[imp.status] || "#6366f1"}`,
-            transition: "transform 0.2s",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E" }}>{imp.nome}</div>
-                <div style={{ fontSize: 12, color: "#8E8E93" }}>{imp.modelo}</div>
-              </div>
-              <StatusBadge status={imp.status} />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-              <div style={{ fontSize: 11, color: "#8E8E93" }}>Tipo: <span style={{ color: "#1C1C1E" }}>{imp.tipo}</span></div>
-              <div style={{ fontSize: 11, color: "#8E8E93" }}>Horas: <span style={{ color: "#1C1C1E", fontFamily: "inherit" }}>{imp.horasUso}h</span></div>
-              <div style={{ fontSize: 11, color: "#8E8E93", gridColumn: "1 / -1" }}>Manutenção: <span style={{ color: "#1C1C1E" }}>{imp.ultimaManutencao}</span></div>
-            </div>
-            {imp.observacoes && <div style={{ fontSize: 11, color: "#475569", fontStyle: "italic", marginBottom: 12 }}>{imp.observacoes}</div>}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => openEdit(imp)} style={{ ...btnSecondary, padding: "6px 14px", fontSize: 11, flex: 1 }}>Editar</button>
-              <button onClick={() => handleDelete(imp.id)} style={{ ...btnSecondary, padding: "6px 14px", fontSize: 11, borderColor: "rgba(239,68,68,0.3)", color: "#f87171" }}>Excluir</button>
+              )}
             </div>
           </div>
         ))}
       </div>
+    );
+  }
 
-      {showModal && (
-        <Modal title={editItem ? "Editar Impressora" : "Nova Impressora"} onClose={() => setShowModal(false)}>
-          {impFields.map(f => <FormField key={f.key} field={f} value={form[f.key]} onChange={handleChange} />)}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
+  // ============================================================
+  // IMPRESSORAS MODULE
+  // ============================================================
+  function ImpressorasModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
 
-// ============================================================
-// MATERIAIS MODULE
-// ============================================================
-// ============================================================
-// STOCK MODULE (ESTOQUE)
-// ============================================================
-function StockModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-  const [filterType, setFilterType] = useState("todos");
+    const openNew = () => { setEditItem(null); setForm({ status: "disponivel", horasUso: 0 }); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+    const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
-  // Calculate demand from quotes (Status = "orcamento")
-  const potentialDemand = useMemo(() => {
-    const demand = {}; // materialId -> weight needed
-    data.pedidos
-      .filter(p => p.status === "orcamento")
-      .forEach(p => {
-        if (!p.itens) return;
-        p.itens.forEach(orderItem => {
-          let product = data.produtos.find(px => px.nome === orderItem.produto);
-          if (!product) product = data.produtos.find(px => px.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
-
-          if (product && product.composicao) {
-            product.composicao.forEach(c => {
-              // Aggregation key: ID if valid, else Type+Color
-              // We will try to map to existing material IDs first
-              const mat = data.materiais.find(m => String(m.id).trim() === String(c.materialId).trim());
-              let key = mat ? mat.id : `${c.tipo}_${c.cor}`;
-
-              if (!demand[key]) demand[key] = 0;
-              demand[key] += (c.peso || 0) * (orderItem.quantidade || 0);
-            });
-          }
-        });
-      });
-    return demand;
-  }, [data.pedidos, data.produtos, data.materiais]);
-
-  const openNew = () => {
-    setEditItem(null);
-    setForm({
-      quantidadeTotal: 1000,
-      quantidadeAtual: 1000,
-      estoqueMinimo: 5,
-      unidade: "g",
-      tipo: "PLA",
-      cor: "Branco"
-    });
-    setShowModal(true);
-  };
-
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
-
-  const handleChange = (key, val) => {
-    setForm(prev => {
-      const next = { ...prev, [key]: val };
-
-      // Auto-update Name if Type or Color changes
-      if (key === "tipo" || key === "cor") {
-        const t = key === "tipo" ? val : (next.tipo || "");
-        const c = key === "cor" ? val : (next.cor || "");
-        next.nome = `${t} ${c}`.trim();
+    const handleSave = () => {
+      if (editItem) {
+        setData(prev => ({ ...prev, impressoras: prev.impressoras.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
+        showToast("Impressora atualizada!");
+      } else {
+        setData(prev => ({ ...prev, impressoras: [...prev.impressoras, { ...form, id: generateId() }] }));
+        showToast("Impressora cadastrada!");
       }
+      setShowModal(false);
+    };
 
-      return next;
-    });
-  };
+    const handleDelete = (id) => {
+      setData(prev => ({ ...prev, impressoras: prev.impressoras.filter(i => i.id !== id) }));
+      showToast("Impressora removida", "warning");
+    };
 
-  const handleSave = () => {
-    if (!form.nome) form.nome = `${form.tipo} ${form.cor}`; // Fallback name
+    const impFields = [
+      { key: "nome", label: "Nome/Apelido", type: "text", required: true },
+      { key: "modelo", label: "Modelo", type: "text" },
+      { key: "tipo", label: "Tipo", type: "select", options: ["FDM", "Resina", "SLS", "SLA"] },
+      { key: "status", label: "Status", type: "select", options: ["disponivel", "imprimindo", "manutencao"] },
+      { key: "horasUso", label: "Horas de Uso", type: "number" },
+      { key: "ultimaManutencao", label: "Última Manutenção", type: "text" },
+      { key: "observacoes", label: "Observações", type: "textarea" },
+    ];
 
-    // Auto calc Cost/Kg if provided price
-    if (form.precoPago && form.quantidadeTotal) {
-      let factor = (form.unidade === "kg" || form.unidade === "l") ? 1 : 1000;
-      if (form.unidade === "g" || form.unidade === "ml") factor = 1000;
+    const statusColors = { disponivel: "#34C759", imprimindo: "#FF9500", manutencao: "#FF3B30" };
 
-      // If unit is 'g', price is per package. 
-      // We usually store costKg. 
-      // CostKg = (Price / TotalWeight) * 1000
-      const totalW = parseFloat(form.quantidadeTotal);
-      const price = parseFloat(form.precoPago);
-      if (totalW > 0) {
-        form.custoKg = parseFloat(((price / totalW) * factor).toFixed(2));
-      }
-    }
-
-    if (editItem) {
-      setData(prev => ({ ...prev, materiais: prev.materiais.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
-      showToast("Material atualizado!");
-    } else {
-      setData(prev => ({ ...prev, materiais: [...prev.materiais, { ...form, id: generateId() }] }));
-      showToast("Novo material adicionado ao estoque!");
-    }
-    setShowModal(false);
-  };
-
-  const handleDelete = (id) => {
-    if (window.confirm("Remover este material do estoque?")) {
-      setData(prev => ({ ...prev, materiais: prev.materiais.filter(i => i.id !== id) }));
-      showToast("Material removido", "warning");
-    }
-  };
-
-  const matFields = [
-    { key: "tipo", label: "Tipo (PLA/ABS...)", type: "select", options: ["PLA", "ABS", "PETG", "Resina", "TPU", "Nylon", "ASA"] },
-    { key: "cor", label: "Cor", type: "text", required: true },
-    { key: "nome", label: "Nome de Identificação", type: "text", placeholder: "Ex: PLA Branco 3D Fila" },
-    { key: "marca", label: "Marca / Fabricante", type: "text" },
-    { key: "quantidadeTotal", label: "Peso do Carretel (Original)", type: "number", placeholder: "1000" },
-    { key: "quantidadeAtual", label: "Peso Atual (Restante)", type: "number", required: true },
-    { key: "unidade", label: "Unidade", type: "select", options: ["g", "kg", "ml", "l"] },
-    { key: "estoqueMinimo", label: "Alerta de Mínimo", type: "number" },
-    { key: "precoPago", label: "Preço Pago (R$)", type: "number", placeholder: "Custo do rolo fechado" },
-  ];
-
-  const types = ["todos", ...new Set(data.materiais.map(m => m.tipo))];
-  const filtered = data.materiais.filter(m => filterType === "todos" || m.tipo === filterType);
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      {/* Header / Actions */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>📦 Controle de Estoque</h2>
-          <div style={{ height: 24, w: 1, background: "#ccc", margin: "0 8px" }} />
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ ...inputStyle, width: 150, margin: 0 }}>
-            {types.map(t => <option key={t} value={t}>{t === "todos" ? "Todos os Tipos" : t}</option>)}
-          </select>
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
+          <button onClick={openNew} style={btnPrimary}>+ Nova Impressora</button>
         </div>
-        <button onClick={openNew} style={btnPrimary}>+ Adicionar Material</button>
-      </div>
 
-      {/* Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-        {filtered.map(m => {
-          const pct = Math.min(100, Math.max(0, ((m.quantidadeAtual || 0) / (m.quantidadeTotal || 1000)) * 100));
-          const isLow = (m.quantidadeAtual || 0) <= (m.estoqueMinimo || 0);
-          const barColor = isLow ? "#FF3B30" : (pct < 40 ? "#FF9500" : "#34C759");
-
-          // Demand Calculation
-          const demandKey = m.id;
-          const fallbackKey = `${m.tipo}_${m.cor}`;
-          const needed = (potentialDemand[demandKey] || 0) + (potentialDemand[fallbackKey] || 0);
-
-          return (
-            <div key={m.id} style={{ ...cardStyle, position: "relative", overflow: "hidden" }}>
-              {isLow && <div style={{ position: "absolute", top: 0, right: 0, background: "#FF3B30", color: "#fff", fontSize: 9, fontWeight: 700, padding: "4px 8px", borderBottomLeftRadius: 8 }}>BAIXO ESTOQUE</div>}
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+          {data.impressoras.map(imp => (
+            <div key={imp.id} style={{
+              ...cardStyle,
+              borderLeft: `4px solid ${statusColors[imp.status] || "#6366f1"}`,
+              transition: "transform 0.2s",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "#1C1C1E" }}>{m.tipo} {m.cor}</div>
-                  <div style={{ fontSize: 12, color: "#8E8E93" }}>{m.marca || "Genérico"}</div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E" }}>{imp.nome}</div>
+                  <div style={{ fontSize: 12, color: "#8E8E93" }}>{imp.modelo}</div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#1C1C1E" }}>
-                    {m.quantidadeAtual}<small style={{ fontSize: 12, fontWeight: 400 }}>{m.unidade}</small>
-                  </div>
-                  <div style={{ fontSize: 10, color: "#8E8E93" }}>de {m.quantidadeTotal}{m.unidade}</div>
-                </div>
+                <StatusBadge status={imp.status} />
               </div>
-
-              {/* Progress Bar */}
-              <div style={{ height: 8, background: "#F2F2F7", borderRadius: 4, overflow: "hidden", marginBottom: 8, position: "relative" }}>
-                <div style={{ width: `${pct}%`, height: "100%", background: barColor, transition: "width 0.5s ease" }} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: "#8E8E93" }}>Tipo: <span style={{ color: "#1C1C1E" }}>{imp.tipo}</span></div>
+                <div style={{ fontSize: 11, color: "#8E8E93" }}>Horas: <span style={{ color: "#1C1C1E", fontFamily: "inherit" }}>{imp.horasUso}h</span></div>
+                <div style={{ fontSize: 11, color: "#8E8E93", gridColumn: "1 / -1" }}>Manutenção: <span style={{ color: "#1C1C1E" }}>{imp.ultimaManutencao}</span></div>
               </div>
-
-              {/* Stats & Actions */}
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11, color: "#666", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F2F2F7" }}>
-                <div>
-                  <div>Preço Kg: <strong>R$ {m.custoKg ? m.custoKg.toFixed(2) : "0.00"}</strong></div>
-                  {needed > 0 && (
-                    <div style={{ color: "#FF9500", marginTop: 4, fontWeight: 600 }}>
-                      ⚠ Demanda em Orçamentos: {needed}g
-                    </div>
-                  )}
-                  {needed > (m.quantidadeAtual || 0) && (
-                    <div style={{ color: "#FF3B30", fontWeight: 700 }}>
-                      FALTA: {(needed - m.quantidadeAtual).toFixed(0)}g
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                  <button onClick={() => openEdit(m)} style={{ ...btnSecondary, padding: "4px 10px", height: 28 }}>Editar</button>
-                  <button onClick={() => handleDelete(m.id)} style={{ ...btnSecondary, padding: "4px 10px", height: 28, color: "#FF3B30" }}>Excluir</button>
-                </div>
+              {imp.observacoes && <div style={{ fontSize: 11, color: "#475569", fontStyle: "italic", marginBottom: 12 }}>{imp.observacoes}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => openEdit(imp)} style={{ ...btnSecondary, padding: "6px 14px", fontSize: 11, flex: 1 }}>Editar</button>
+                <button onClick={() => handleDelete(imp.id)} style={{ ...btnSecondary, padding: "6px 14px", fontSize: 11, borderColor: "rgba(239,68,68,0.3)", color: "#f87171" }}>Excluir</button>
               </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
 
-      {showModal && (
-        <Modal title={editItem ? "Editar Material" : "Novo Material"} onClose={() => setShowModal(false)} width={600}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {matFields.map(f => (
-              <div key={f.key} style={f.key === "nome" ? { gridColumn: "1 / -1" } : {}}>
-                <FormField field={f} value={form[f.key]} onChange={handleChange} />
+        {showModal && (
+          <Modal title={editItem ? "Editar Impressora" : "Nova Impressora"} onClose={() => setShowModal(false)}>
+            {impFields.map(f => <FormField key={f.key} field={f} value={form[f.key]} onChange={handleChange} />)}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // MATERIAIS MODULE
+  // ============================================================
+  // ============================================================
+  // STOCK MODULE (ESTOQUE)
+  // ============================================================
+  function StockModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
+    const [filterType, setFilterType] = useState("todos");
+
+    // Calculate demand from quotes (Status = "orcamento")
+    const potentialDemand = useMemo(() => {
+      const demand = {}; // materialId -> weight needed
+      data.pedidos
+        .filter(p => p.status === "orcamento")
+        .forEach(p => {
+          if (!p.itens) return;
+          p.itens.forEach(orderItem => {
+            let product = data.produtos.find(px => px.nome === orderItem.produto);
+            if (!product) product = data.produtos.find(px => px.nome.toLowerCase().trim() === (orderItem.produto || "").toLowerCase().trim());
+
+            if (product && product.composicao) {
+              product.composicao.forEach(c => {
+                // Aggregation key: ID if valid, else Type+Color
+                // We will try to map to existing material IDs first
+                const mat = data.materiais.find(m => String(m.id).trim() === String(c.materialId).trim());
+                let key = mat ? mat.id : `${c.tipo}_${c.cor}`;
+
+                if (!demand[key]) demand[key] = 0;
+                demand[key] += (c.peso || 0) * (orderItem.quantidade || 0);
+              });
+            }
+          });
+        });
+      return demand;
+    }, [data.pedidos, data.produtos, data.materiais]);
+
+    const openNew = () => {
+      setEditItem(null);
+      setForm({
+        quantidadeTotal: 1000,
+        quantidadeAtual: 1000,
+        estoqueMinimo: 5,
+        unidade: "g",
+        tipo: "PLA",
+        cor: "Branco"
+      });
+      setShowModal(true);
+    };
+
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+
+    const handleChange = (key, val) => {
+      setForm(prev => {
+        const next = { ...prev, [key]: val };
+
+        // Auto-update Name if Type or Color changes
+        if (key === "tipo" || key === "cor") {
+          const t = key === "tipo" ? val : (next.tipo || "");
+          const c = key === "cor" ? val : (next.cor || "");
+          next.nome = `${t} ${c}`.trim();
+        }
+
+        return next;
+      });
+    };
+
+    const handleSave = () => {
+      if (!form.nome) form.nome = `${form.tipo} ${form.cor}`; // Fallback name
+
+      // Auto calc Cost/Kg if provided price
+      if (form.precoPago && form.quantidadeTotal) {
+        let factor = (form.unidade === "kg" || form.unidade === "l") ? 1 : 1000;
+        if (form.unidade === "g" || form.unidade === "ml") factor = 1000;
+
+        // If unit is 'g', price is per package. 
+        // We usually store costKg. 
+        // CostKg = (Price / TotalWeight) * 1000
+        const totalW = parseFloat(form.quantidadeTotal);
+        const price = parseFloat(form.precoPago);
+        if (totalW > 0) {
+          form.custoKg = parseFloat(((price / totalW) * factor).toFixed(2));
+        }
+      }
+
+      if (editItem) {
+        setData(prev => ({ ...prev, materiais: prev.materiais.map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i) }));
+        showToast("Material atualizado!");
+      } else {
+        setData(prev => ({ ...prev, materiais: [...prev.materiais, { ...form, id: generateId() }] }));
+        showToast("Novo material adicionado ao estoque!");
+      }
+      setShowModal(false);
+    };
+
+    const handleDelete = (id) => {
+      if (window.confirm("Remover este material do estoque?")) {
+        setData(prev => ({ ...prev, materiais: prev.materiais.filter(i => i.id !== id) }));
+        showToast("Material removido", "warning");
+      }
+    };
+
+    const matFields = [
+      { key: "tipo", label: "Tipo (PLA/ABS...)", type: "select", options: ["PLA", "ABS", "PETG", "Resina", "TPU", "Nylon", "ASA"] },
+      { key: "cor", label: "Cor", type: "text", required: true },
+      { key: "nome", label: "Nome de Identificação", type: "text", placeholder: "Ex: PLA Branco 3D Fila" },
+      { key: "marca", label: "Marca / Fabricante", type: "text" },
+      { key: "quantidadeTotal", label: "Peso do Carretel (Original)", type: "number", placeholder: "1000" },
+      { key: "quantidadeAtual", label: "Peso Atual (Restante)", type: "number", required: true },
+      { key: "unidade", label: "Unidade", type: "select", options: ["g", "kg", "ml", "l"] },
+      { key: "estoqueMinimo", label: "Alerta de Mínimo", type: "number" },
+      { key: "precoPago", label: "Preço Pago (R$)", type: "number", placeholder: "Custo do rolo fechado" },
+    ];
+
+    const types = ["todos", ...new Set(data.materiais.map(m => m.tipo))];
+    const filtered = data.materiais.filter(m => filterType === "todos" || m.tipo === filterType);
+
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        {/* Header / Actions */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>📦 Controle de Estoque</h2>
+            <div style={{ height: 24, w: 1, background: "#ccc", margin: "0 8px" }} />
+            <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ ...inputStyle, width: 150, margin: 0 }}>
+              {types.map(t => <option key={t} value={t}>{t === "todos" ? "Todos os Tipos" : t}</option>)}
+            </select>
+          </div>
+          <button onClick={openNew} style={btnPrimary}>+ Adicionar Material</button>
+        </div>
+
+        {/* Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+          {filtered.map(m => {
+            const pct = Math.min(100, Math.max(0, ((m.quantidadeAtual || 0) / (m.quantidadeTotal || 1000)) * 100));
+            const isLow = (m.quantidadeAtual || 0) <= (m.estoqueMinimo || 0);
+            const barColor = isLow ? "#FF3B30" : (pct < 40 ? "#FF9500" : "#34C759");
+
+            // Demand Calculation
+            const demandKey = m.id;
+            const fallbackKey = `${m.tipo}_${m.cor}`;
+            const needed = (potentialDemand[demandKey] || 0) + (potentialDemand[fallbackKey] || 0);
+
+            return (
+              <div key={m.id} style={{ ...cardStyle, position: "relative", overflow: "hidden" }}>
+                {isLow && <div style={{ position: "absolute", top: 0, right: 0, background: "#FF3B30", color: "#fff", fontSize: 9, fontWeight: 700, padding: "4px 8px", borderBottomLeftRadius: 8 }}>BAIXO ESTOQUE</div>}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1C1C1E" }}>{m.tipo} {m.cor}</div>
+                    <div style={{ fontSize: 12, color: "#8E8E93" }}>{m.marca || "Genérico"}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#1C1C1E" }}>
+                      {m.quantidadeAtual}<small style={{ fontSize: 12, fontWeight: 400 }}>{m.unidade}</small>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#8E8E93" }}>de {m.quantidadeTotal}{m.unidade}</div>
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div style={{ height: 8, background: "#F2F2F7", borderRadius: 4, overflow: "hidden", marginBottom: 8, position: "relative" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: barColor, transition: "width 0.5s ease" }} />
+                </div>
+
+                {/* Stats & Actions */}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11, color: "#666", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F2F2F7" }}>
+                  <div>
+                    <div>Preço Kg: <strong>R$ {m.custoKg ? m.custoKg.toFixed(2) : "0.00"}</strong></div>
+                    {needed > 0 && (
+                      <div style={{ color: "#FF9500", marginTop: 4, fontWeight: 600 }}>
+                        ⚠ Demanda em Orçamentos: {needed}g
+                      </div>
+                    )}
+                    {needed > (m.quantidadeAtual || 0) && (
+                      <div style={{ color: "#FF3B30", fontWeight: 700 }}>
+                        FALTA: {(needed - m.quantidadeAtual).toFixed(0)}g
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                    <button onClick={() => openEdit(m)} style={{ ...btnSecondary, padding: "4px 10px", height: 28 }}>Editar</button>
+                    <button onClick={() => handleDelete(m.id)} style={{ ...btnSecondary, padding: "4px 10px", height: 28, color: "#FF3B30" }}>Excluir</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {showModal && (
+          <Modal title={editItem ? "Editar Material" : "Novo Material"} onClose={() => setShowModal(false)} width={600}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {matFields.map(f => (
+                <div key={f.key} style={f.key === "nome" ? { gridColumn: "1 / -1" } : {}}>
+                  <FormField field={f} value={form[f.key]} onChange={handleChange} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24, paddingTop: 16, borderTop: "1px solid #E5E5EA" }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar Estoque</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // FINANCEIRO MODULE
+  // ============================================================
+  function FinanceiroModule() {
+    const { data, setData, showToast } = useContext(AppContext);
+    const [tab, setTab] = useState("receber");
+    const [showModal, setShowModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [form, setForm] = useState({});
+
+    const totalReceber = data.financeiro.contasReceber.reduce((s, c) => s + c.valor, 0);
+    const totalRecebido = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
+    const totalPagar = data.financeiro.contasPagar.reduce((s, c) => s + c.valor, 0);
+    const totalPago = data.financeiro.contasPagar.filter(c => c.status === "pago").reduce((s, c) => s + c.valor, 0);
+
+    const recFields = [
+      { key: "descricao", label: "Descrição", type: "text", required: true },
+      { key: "valor", label: "Valor (R$)", type: "number" },
+      { key: "valorRecebido", label: "Valor Recebido (R$)", type: "number" },
+      { key: "dataVencimento", label: "Vencimento", type: "date" },
+      { key: "status", label: "Status", type: "select", options: ["pendente", "parcial", "recebido"] },
+      { key: "formaPagamento", label: "Forma Pagamento", type: "select", options: ["PIX", "Cartão", "Cartão 2x", "Cartão 3x", "Boleto", "Transferência"] },
+    ];
+
+    const pagFields = [
+      { key: "descricao", label: "Descrição", type: "text", required: true },
+      { key: "valor", label: "Valor (R$)", type: "number" },
+      { key: "dataVencimento", label: "Vencimento", type: "date" },
+      { key: "status", label: "Status", type: "select", options: ["pendente", "pago"] },
+      { key: "fornecedor", label: "Fornecedor", type: "text" },
+    ];
+
+    const fields = tab === "receber" ? recFields : pagFields;
+    const listKey = tab === "receber" ? "contasReceber" : "contasPagar";
+    const items = data.financeiro[listKey];
+
+    const openNew = () => { setEditItem(null); setForm({ status: "pendente" }); setShowModal(true); };
+    const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
+    const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+
+    const handleSave = () => {
+      if (editItem) {
+        setData(prev => ({
+          ...prev,
+          financeiro: {
+            ...prev.financeiro,
+            [listKey]: prev.financeiro[listKey].map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i),
+          }
+        }));
+        showToast("Registro atualizado!");
+      } else {
+        setData(prev => ({
+          ...prev,
+          financeiro: {
+            ...prev.financeiro,
+            [listKey]: [...prev.financeiro[listKey], { ...form, id: generateId() }],
+          }
+        }));
+        showToast("Registro criado!");
+      }
+      setShowModal(false);
+    };
+
+    const handleDelete = (id) => {
+      setData(prev => ({
+        ...prev,
+        financeiro: { ...prev.financeiro, [listKey]: prev.financeiro[listKey].filter(i => i.id !== id) }
+      }));
+      showToast("Registro removido", "warning");
+    };
+
+    const columns = tab === "receber" ? [
+      { key: "descricao", label: "Descrição" },
+      { key: "valor", label: "Valor", render: v => `R$ ${(v || 0).toFixed(2)}` },
+      { key: "valorRecebido", label: "Recebido", render: v => `R$ ${(v || 0).toFixed(2)}` },
+      { key: "dataVencimento", label: "Vencimento" },
+      { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
+      { key: "formaPagamento", label: "Pagamento" },
+    ] : [
+      { key: "descricao", label: "Descrição" },
+      { key: "valor", label: "Valor", render: v => `R$ ${(v || 0).toFixed(2)}` },
+      { key: "dataVencimento", label: "Vencimento" },
+      { key: "fornecedor", label: "Fornecedor" },
+      { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
+    ];
+
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        {/* SUMMARY */}
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+          <StatCard icon="📥" label="Total a Receber" value={`R$ ${totalReceber.toFixed(2)}`} sub={`Recebido: R$ ${totalRecebido.toFixed(2)}`} color="#34C759" />
+          <StatCard icon="📤" label="Total a Pagar" value={`R$ ${totalPagar.toFixed(2)}`} sub={`Pago: R$ ${totalPago.toFixed(2)}`} color="#FF3B30" />
+          <StatCard icon="📊" label="Balanço" value={`R$ ${(totalRecebido - totalPago).toFixed(2)}`} sub="recebido - pago" color={totalRecebido - totalPago >= 0 ? "#34C759" : "#FF3B30"} />
+        </div>
+
+        {/* TABS */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <button onClick={() => setTab("receber")} style={{ ...tab === "receber" ? btnPrimary : btnSecondary, borderRadius: 10 }}>💰 Contas a Receber</button>
+          <button onClick={() => setTab("pagar")} style={{ ...tab === "pagar" ? btnPrimary : btnSecondary, borderRadius: 10 }}>💳 Contas a Pagar</button>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <button onClick={openNew} style={btnPrimary}>+ Nova Conta</button>
+        </div>
+
+        <div style={cardStyle}>
+          <DataTable columns={columns} data={items} onEdit={openEdit} onDelete={handleDelete} />
+        </div>
+
+        {showModal && (
+          <Modal title={editItem ? "Editar Conta" : "Nova Conta"} onClose={() => setShowModal(false)}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              {fields.map(f => <FormField key={f.key} field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />)}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
+              <button onClick={handleSave} style={btnPrimary}>Salvar</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // RELATORIOS MODULE
+  // ============================================================
+  function RelatoriosModule() {
+    const { data } = useContext(AppContext);
+
+    const totalFaturado = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
+    const totalCustos = data.financeiro.contasPagar.reduce((s, c) => s + c.valor, 0);
+    const lucro = totalFaturado - totalCustos;
+
+    const produtoVendas = {};
+    data.pedidos.forEach(p => {
+      if (p.itens) {
+        p.itens.forEach(it => {
+          // Add proportional value or full value if single item. For simplicity we assume valorUnit exists
+          const totalItem = (it.valorUnitario || 0) * (it.quantidade || 0);
+          produtoVendas[it.produto] = (produtoVendas[it.produto] || 0) + totalItem;
+        });
+      }
+    });
+    const topProdutos = Object.entries(produtoVendas).sort((a, b) => b[1] - a[1]);
+
+    const categoriaCount = {};
+    data.produtos.forEach(p => { categoriaCount[p.categoria] = (categoriaCount[p.categoria] || 0) + 1; });
+
+    const impressoraHoras = data.impressoras.map(i => ({ nome: i.nome, horas: i.horasUso })).sort((a, b) => b.horas - a.horas);
+
+    const falhasTotal = data.producao.reduce((s, p) => s + (p.falhas || 0), 0);
+    const totalImpr = data.producao.length;
+    const taxaFalha = totalImpr ? ((falhasTotal / totalImpr) * 100).toFixed(1) : 0;
+
+    const materialConsumo = {};
+    data.producao.forEach(p => {
+      materialConsumo[p.material] = (materialConsumo[p.material] || 0) + (p.pesoUsado || 0);
+    });
+    const topMateriais = Object.entries(materialConsumo).sort((a, b) => b[1] - a[1]);
+
+    const barMax = topProdutos.length > 0 ? topProdutos[0][1] : 1;
+
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease" }}>
+        {/* TOP SUMMARY */}
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
+          <StatCard icon="💰" label="Faturamento" value={`R$ ${totalFaturado.toFixed(2)}`} color="#34C759" />
+          <StatCard icon="💸" label="Custos" value={`R$ ${totalCustos.toFixed(2)}`} color="#FF3B30" />
+          <StatCard icon="📈" label="Resultado" value={`R$ ${lucro.toFixed(2)}`} color={lucro >= 0 ? "#34C759" : "#FF3B30"} sub={lucro >= 0 ? "Lucro" : "Prejuízo"} />
+          <StatCard icon="⚠️" label="Taxa de Falha" value={`${taxaFalha}%`} color={parseFloat(taxaFalha) > 20 ? "#FF3B30" : "#FF9500"} sub={`${falhasTotal} falhas em ${totalImpr} impressões`} />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+          {/* TOP PRODUTOS */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🏆 Produtos Mais Vendidos</h3>
+            {topProdutos.length === 0 ? <div style={{ color: "#8E8E93", fontSize: 13 }}>Sem dados</div> : topProdutos.map(([nome, valor], i) => (
+              <div key={nome} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: "#1C1C1E", fontWeight: 500 }}>{i + 1}. {nome}</span>
+                  <span style={{ fontFamily: "'Space Mono', monospace", color: "#5856D6", fontWeight: 600 }}>R$ {valor.toFixed(2)}</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "#F2F2F7", overflow: "hidden" }}>
+                  <div style={{ width: `${(valor / barMax) * 100}%`, height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #5856D6, #AF52DE)" }} />
+                </div>
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24, paddingTop: 16, borderTop: "1px solid #E5E5EA" }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar Estoque</button>
+
+          {/* CONSUMO MATERIAIS */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🧵 Consumo de Materiais</h3>
+            {topMateriais.length === 0 ? <div style={{ color: "#8E8E93", fontSize: 13 }}>Sem dados</div> : topMateriais.map(([nome, peso]) => (
+              <div key={nome} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F2F2F7" }}>
+                <span style={{ fontSize: 13, color: "#1C1C1E" }}>{nome}</span>
+                <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 13, color: "#FF9500", fontWeight: 600 }}>{peso}g</span>
+              </div>
+            ))}
           </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
 
-// ============================================================
-// FINANCEIRO MODULE
-// ============================================================
-function FinanceiroModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-  const [tab, setTab] = useState("receber");
-  const [showModal, setShowModal] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
+          {/* IMPRESSORAS POR USO */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🖨️ Uso das Impressoras</h3>
+            {impressoraHoras.map(imp => (
+              <div key={imp.nome} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: "#1C1C1E", fontWeight: 500 }}>{imp.nome}</span>
+                  <span style={{ fontFamily: "'Space Mono', monospace", color: "#007AFF", fontWeight: 600 }}>{imp.horas}h</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "#F2F2F7", overflow: "hidden" }}>
+                  <div style={{ width: `${(imp.horas / Math.max(...impressoraHoras.map(h => h.horas), 1)) * 100}%`, height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #007AFF, #5AC8FA)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
 
-  const totalReceber = data.financeiro.contasReceber.reduce((s, c) => s + c.valor, 0);
-  const totalRecebido = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
-  const totalPagar = data.financeiro.contasPagar.reduce((s, c) => s + c.valor, 0);
-  const totalPago = data.financeiro.contasPagar.filter(c => c.status === "pago").reduce((s, c) => s + c.valor, 0);
+          {/* STATUS GERAL */}
+          <div style={cardStyle}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>📂 Produtos por Categoria</h3>
+            {Object.entries(categoriaCount).map(([cat, count]) => (
+              <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F2F2F7" }}>
+                <span style={{ fontSize: 13, color: "#1C1C1E" }}>{cat}</span>
+                <Badge color="#AF52DE">{count} produto{count !== 1 ? "s" : ""}</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const recFields = [
-    { key: "descricao", label: "Descrição", type: "text", required: true },
-    { key: "valor", label: "Valor (R$)", type: "number" },
-    { key: "valorRecebido", label: "Valor Recebido (R$)", type: "number" },
-    { key: "dataVencimento", label: "Vencimento", type: "date" },
-    { key: "status", label: "Status", type: "select", options: ["pendente", "parcial", "recebido"] },
-    { key: "formaPagamento", label: "Forma Pagamento", type: "select", options: ["PIX", "Cartão", "Cartão 2x", "Cartão 3x", "Boleto", "Transferência"] },
-  ];
+  // ============================================================
+  // CUSTOS MODULE
+  // ============================================================
+  function CustosModule() {
+    const { data, setData, showToast } = useContext(AppContext);
 
-  const pagFields = [
-    { key: "descricao", label: "Descrição", type: "text", required: true },
-    { key: "valor", label: "Valor (R$)", type: "number" },
-    { key: "dataVencimento", label: "Vencimento", type: "date" },
-    { key: "status", label: "Status", type: "select", options: ["pendente", "pago"] },
-    { key: "fornecedor", label: "Fornecedor", type: "text" },
-  ];
+    // Ensure config structure exists
+    // Ensure config structure exists and merge new fields
+    // Config initialization moved to App component
 
-  const fields = tab === "receber" ? recFields : pagFields;
-  const listKey = tab === "receber" ? "contasReceber" : "contasPagar";
-  const items = data.financeiro[listKey];
 
-  const openNew = () => { setEditItem(null); setForm({ status: "pendente" }); setShowModal(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...item }); setShowModal(true); };
-  const handleChange = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+    if (!data.configCustos || !data.configCustos.vendas) return <div style={{ padding: 40, color: "#8E8E93" }}>Carregando configurações...</div>;
 
-  const handleSave = () => {
-    if (editItem) {
+    const { energia, trabalho, depreciacao, vendas, logistica, insumos } = data.configCustos;
+
+    const updateConfig = (section, key, val) => {
       setData(prev => ({
         ...prev,
-        financeiro: {
-          ...prev.financeiro,
-          [listKey]: prev.financeiro[listKey].map(i => i.id === editItem.id ? { ...form, id: editItem.id } : i),
+        configCustos: {
+          ...prev.configCustos,
+          [section]: { ...prev.configCustos[section], [key]: parseFloat(val) || 0 }
         }
       }));
-      showToast("Registro atualizado!");
-    } else {
-      setData(prev => ({
-        ...prev,
-        financeiro: {
-          ...prev.financeiro,
-          [listKey]: [...prev.financeiro[listKey], { ...form, id: generateId() }],
-        }
-      }));
-      showToast("Registro criado!");
-    }
-    setShowModal(false);
-  };
+    };
 
-  const handleDelete = (id) => {
-    setData(prev => ({
-      ...prev,
-      financeiro: { ...prev.financeiro, [listKey]: prev.financeiro[listKey].filter(i => i.id !== id) }
-    }));
-    showToast("Registro removido", "warning");
-  };
-
-  const columns = tab === "receber" ? [
-    { key: "descricao", label: "Descrição" },
-    { key: "valor", label: "Valor", render: v => `R$ ${(v || 0).toFixed(2)}` },
-    { key: "valorRecebido", label: "Recebido", render: v => `R$ ${(v || 0).toFixed(2)}` },
-    { key: "dataVencimento", label: "Vencimento" },
-    { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
-    { key: "formaPagamento", label: "Pagamento" },
-  ] : [
-    { key: "descricao", label: "Descrição" },
-    { key: "valor", label: "Valor", render: v => `R$ ${(v || 0).toFixed(2)}` },
-    { key: "dataVencimento", label: "Vencimento" },
-    { key: "fornecedor", label: "Fornecedor" },
-    { key: "status", label: "Status", render: v => <StatusBadge status={v} /> },
-  ];
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      {/* SUMMARY */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
-        <StatCard icon="📥" label="Total a Receber" value={`R$ ${totalReceber.toFixed(2)}`} sub={`Recebido: R$ ${totalRecebido.toFixed(2)}`} color="#34C759" />
-        <StatCard icon="📤" label="Total a Pagar" value={`R$ ${totalPagar.toFixed(2)}`} sub={`Pago: R$ ${totalPago.toFixed(2)}`} color="#FF3B30" />
-        <StatCard icon="📊" label="Balanço" value={`R$ ${(totalRecebido - totalPago).toFixed(2)}`} sub="recebido - pago" color={totalRecebido - totalPago >= 0 ? "#34C759" : "#FF3B30"} />
-      </div>
-
-      {/* TABS */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <button onClick={() => setTab("receber")} style={{ ...tab === "receber" ? btnPrimary : btnSecondary, borderRadius: 10 }}>💰 Contas a Receber</button>
-        <button onClick={() => setTab("pagar")} style={{ ...tab === "pagar" ? btnPrimary : btnSecondary, borderRadius: 10 }}>💳 Contas a Pagar</button>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button onClick={openNew} style={btnPrimary}>+ Nova Conta</button>
-      </div>
-
-      <div style={cardStyle}>
-        <DataTable columns={columns} data={items} onEdit={openEdit} onDelete={handleDelete} />
-      </div>
-
-      {showModal && (
-        <Modal title={editItem ? "Editar Conta" : "Nova Conta"} onClose={() => setShowModal(false)}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-            {fields.map(f => <FormField key={f.key} field={f} value={form[f.key]} onChange={handleChange} formValues={form} setForm={setForm} />)}
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => setShowModal(false)} style={btnSecondary}>Cancelar</button>
-            <button onClick={handleSave} style={btnPrimary}>Salvar</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// RELATORIOS MODULE
-// ============================================================
-function RelatoriosModule() {
-  const { data } = useContext(AppContext);
-
-  const totalFaturado = data.financeiro.contasReceber.reduce((s, c) => s + (c.valorRecebido || 0), 0);
-  const totalCustos = data.financeiro.contasPagar.reduce((s, c) => s + c.valor, 0);
-  const lucro = totalFaturado - totalCustos;
-
-  const produtoVendas = {};
-  data.pedidos.forEach(p => {
-    if (p.itens) {
-      p.itens.forEach(it => {
-        // Add proportional value or full value if single item. For simplicity we assume valorUnit exists
-        const totalItem = (it.valorUnitario || 0) * (it.quantidade || 0);
-        produtoVendas[it.produto] = (produtoVendas[it.produto] || 0) + totalItem;
-      });
-    }
-  });
-  const topProdutos = Object.entries(produtoVendas).sort((a, b) => b[1] - a[1]);
-
-  const categoriaCount = {};
-  data.produtos.forEach(p => { categoriaCount[p.categoria] = (categoriaCount[p.categoria] || 0) + 1; });
-
-  const impressoraHoras = data.impressoras.map(i => ({ nome: i.nome, horas: i.horasUso })).sort((a, b) => b.horas - a.horas);
-
-  const falhasTotal = data.producao.reduce((s, p) => s + (p.falhas || 0), 0);
-  const totalImpr = data.producao.length;
-  const taxaFalha = totalImpr ? ((falhasTotal / totalImpr) * 100).toFixed(1) : 0;
-
-  const materialConsumo = {};
-  data.producao.forEach(p => {
-    materialConsumo[p.material] = (materialConsumo[p.material] || 0) + (p.pesoUsado || 0);
-  });
-  const topMateriais = Object.entries(materialConsumo).sort((a, b) => b[1] - a[1]);
-
-  const barMax = topProdutos.length > 0 ? topProdutos[0][1] : 1;
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease" }}>
-      {/* TOP SUMMARY */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
-        <StatCard icon="💰" label="Faturamento" value={`R$ ${totalFaturado.toFixed(2)}`} color="#34C759" />
-        <StatCard icon="💸" label="Custos" value={`R$ ${totalCustos.toFixed(2)}`} color="#FF3B30" />
-        <StatCard icon="📈" label="Resultado" value={`R$ ${lucro.toFixed(2)}`} color={lucro >= 0 ? "#34C759" : "#FF3B30"} sub={lucro >= 0 ? "Lucro" : "Prejuízo"} />
-        <StatCard icon="⚠️" label="Taxa de Falha" value={`${taxaFalha}%`} color={parseFloat(taxaFalha) > 20 ? "#FF3B30" : "#FF9500"} sub={`${falhasTotal} falhas em ${totalImpr} impressões`} />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-        {/* TOP PRODUTOS */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🏆 Produtos Mais Vendidos</h3>
-          {topProdutos.length === 0 ? <div style={{ color: "#8E8E93", fontSize: 13 }}>Sem dados</div> : topProdutos.map(([nome, valor], i) => (
-            <div key={nome} style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                <span style={{ color: "#1C1C1E", fontWeight: 500 }}>{i + 1}. {nome}</span>
-                <span style={{ fontFamily: "'Space Mono', monospace", color: "#5856D6", fontWeight: 600 }}>R$ {valor.toFixed(2)}</span>
-              </div>
-              <div style={{ height: 6, borderRadius: 3, background: "#F2F2F7", overflow: "hidden" }}>
-                <div style={{ width: `${(valor / barMax) * 100}%`, height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #5856D6, #AF52DE)" }} />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* CONSUMO MATERIAIS */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🧵 Consumo de Materiais</h3>
-          {topMateriais.length === 0 ? <div style={{ color: "#8E8E93", fontSize: 13 }}>Sem dados</div> : topMateriais.map(([nome, peso]) => (
-            <div key={nome} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F2F2F7" }}>
-              <span style={{ fontSize: 13, color: "#1C1C1E" }}>{nome}</span>
-              <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 13, color: "#FF9500", fontWeight: 600 }}>{peso}g</span>
-            </div>
-          ))}
-        </div>
-
-        {/* IMPRESSORAS POR USO */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>🖨️ Uso das Impressoras</h3>
-          {impressoraHoras.map(imp => (
-            <div key={imp.nome} style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                <span style={{ color: "#1C1C1E", fontWeight: 500 }}>{imp.nome}</span>
-                <span style={{ fontFamily: "'Space Mono', monospace", color: "#007AFF", fontWeight: 600 }}>{imp.horas}h</span>
-              </div>
-              <div style={{ height: 6, borderRadius: 3, background: "#F2F2F7", overflow: "hidden" }}>
-                <div style={{ width: `${(imp.horas / Math.max(...impressoraHoras.map(h => h.horas), 1)) * 100}%`, height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #007AFF, #5AC8FA)" }} />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* STATUS GERAL */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, color: "#5856D6" }}>📂 Produtos por Categoria</h3>
-          {Object.entries(categoriaCount).map(([cat, count]) => (
-            <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F2F2F7" }}>
-              <span style={{ fontSize: 13, color: "#1C1C1E" }}>{cat}</span>
-              <Badge color="#AF52DE">{count} produto{count !== 1 ? "s" : ""}</Badge>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// CUSTOS MODULE
-// ============================================================
-function CustosModule() {
-  const { data, setData, showToast } = useContext(AppContext);
-
-  // Ensure config structure exists
-  // Ensure config structure exists and merge new fields
-  // Config initialization moved to App component
-
-
-  if (!data.configCustos || !data.configCustos.vendas) return <div style={{ padding: 40, color: "#8E8E93" }}>Carregando configurações...</div>;
-
-  const { energia, trabalho, depreciacao, vendas, logistica, insumos } = data.configCustos;
-
-  const updateConfig = (section, key, val) => {
-    setData(prev => ({
-      ...prev,
-      configCustos: {
-        ...prev.configCustos,
-        [section]: { ...prev.configCustos[section], [key]: parseFloat(val) || 0 }
+    const addInsumo = () => {
+      const nome = prompt("Nome do Insumo:");
+      const custo = parseFloat(prompt("Custo Unitário (R$):"));
+      if (nome && custo) {
+        setData(prev => ({
+          ...prev,
+          configCustos: {
+            ...prev.configCustos,
+            insumos: [...prev.configCustos.insumos, { id: Date.now(), nome, custo, categoria: "Geral", durabilidadeEstimada: 10 }]
+          }
+        }));
       }
-    }));
-  };
+    };
 
-  const addInsumo = () => {
-    const nome = prompt("Nome do Insumo:");
-    const custo = parseFloat(prompt("Custo Unitário (R$):"));
-    if (nome && custo) {
-      setData(prev => ({
-        ...prev,
-        configCustos: {
-          ...prev.configCustos,
-          insumos: [...prev.configCustos.insumos, { id: Date.now(), nome, custo, categoria: "Geral", durabilidadeEstimada: 10 }]
-        }
-      }));
-    }
-  };
+    const removeInsumo = (id) => {
+      if (confirm("Remover este insumo?")) {
+        setData(prev => ({
+          ...prev,
+          configCustos: {
+            ...prev.configCustos,
+            insumos: prev.configCustos.insumos.filter(i => i.id !== id)
+          }
+        }));
+      }
+    };
 
-  const removeInsumo = (id) => {
-    if (confirm("Remover este insumo?")) {
-      setData(prev => ({
-        ...prev,
-        configCustos: {
-          ...prev.configCustos,
-          insumos: prev.configCustos.insumos.filter(i => i.id !== id)
-        }
-      }));
-    }
-  };
-
-  return (
-    <div style={{ animation: "fadeIn 0.4s ease", paddingBottom: 40 }}>
-      {/* HEADER */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 600, color: "#1C1C1E", marginBottom: 8 }}>Configuração de Custos</h2>
-        <p style={{ fontSize: 14, color: "#8E8E93" }}>Base de cálculo para precificação precisa dos seus produtos.</p>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
-
-        {/* ENERGIA */}
-        <div style={cardStyle}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#FF9500", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>⚡ Energia Elétrica</h3>
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo por kWh (R$)</label>
-              <input type="number" step="0.01" value={energia.custoKwh} onChange={e => updateConfig("energia", "custoKwh", e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Consumo Médio FDM (Watts)</label>
-              <input type="number" value={energia.consumoMedioFDM} onChange={e => updateConfig("energia", "consumoMedioFDM", e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Consumo Médio Resina (Watts)</label>
-              <input type="number" value={energia.consumoMedioResina} onChange={e => updateConfig("energia", "consumoMedioResina", e.target.value)} style={inputStyle} />
-            </div>
-          </div>
+    return (
+      <div style={{ animation: "fadeIn 0.4s ease", paddingBottom: 40 }}>
+        {/* HEADER */}
+        <div style={{ marginBottom: 24 }}>
+          <h2 style={{ fontSize: 22, fontWeight: 600, color: "#1C1C1E", marginBottom: 8 }}>Configuração de Custos</h2>
+          <p style={{ fontSize: 14, color: "#8E8E93" }}>Base de cálculo para precificação precisa dos seus produtos.</p>
         </div>
 
-        {/* MÃO DE OBRA */}
-        <div style={cardStyle}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#007AFF", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>👷 Mão de Obra</h3>
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Hora Técnica / Operacional (R$)</label>
-              <input type="number" step="0.50" value={trabalho.horaTecnica} onChange={e => updateConfig("trabalho", "horaTecnica", e.target.value)} style={inputStyle} />
-              <p style={{ fontSize: 10, color: "#8E8E93", marginTop: 4 }}>Tempo gasto fatiando, limpando a impressora, removendo suportes.</p>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Hora Modelagem 3D (R$)</label>
-              <input type="number" step="0.50" value={trabalho.horaModelagem} onChange={e => updateConfig("trabalho", "horaModelagem", e.target.value)} style={inputStyle} />
-            </div>
-          </div>
-        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
 
-        {/* DEPRECIAÇÃO */}
-        <div style={cardStyle}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#AF52DE", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>📉 Depreciação</h3>
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Vida Útil Estimada (Horas de Impressão)</label>
-              <input type="number" value={depreciacao.vidaUtilHoras} onChange={e => updateConfig("depreciacao", "vidaUtilHoras", e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>% Custo Manutenção (sobre o valor da máquina)</label>
-              <input type="number" value={depreciacao.manutencaoPercent} onChange={e => updateConfig("depreciacao", "manutencaoPercent", e.target.value)} style={inputStyle} />
-            </div>
-          </div>
-        </div>
-
-
-
-        {/* TAXAS & VENDAS */}
-        <div style={cardStyle}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#FF3B30", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>💸 Taxas & Vendas</h3>
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Impostos Padronizados (%)</label>
-              <div style={{ position: "relative" }}>
-                <input type="number" step="0.5" value={vendas.impostosPercent} onChange={e => updateConfig("vendas", "impostosPercent", e.target.value)} style={inputStyle} />
-                <span style={{ position: "absolute", right: 12, top: 12, color: "#8E8E93", fontSize: 12 }}>%</span>
+          {/* ENERGIA */}
+          <div style={cardStyle}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#FF9500", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>⚡ Energia Elétrica</h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo por kWh (R$)</label>
+                <input type="number" step="0.01" value={energia.custoKwh} onChange={e => updateConfig("energia", "custoKwh", e.target.value)} style={inputStyle} />
               </div>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Taxa Marketplace Padrão (%)</label>
-              <div style={{ position: "relative" }}>
-                <input type="number" step="0.5" value={vendas.taxaMarketplacePercent} onChange={e => updateConfig("vendas", "taxaMarketplacePercent", e.target.value)} style={inputStyle} />
-                <span style={{ position: "absolute", right: 12, top: 12, color: "#8E8E93", fontSize: 12 }}>%</span>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Consumo Médio FDM (Watts)</label>
+                <input type="number" value={energia.consumoMedioFDM} onChange={e => updateConfig("energia", "consumoMedioFDM", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Consumo Médio Resina (Watts)</label>
+                <input type="number" value={energia.consumoMedioResina} onChange={e => updateConfig("energia", "consumoMedioResina", e.target.value)} style={inputStyle} />
               </div>
             </div>
           </div>
-        </div>
 
-        {/* LOGÍSTICA & EMBALAGEM */}
-        <div style={cardStyle}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#34C759", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>📦 Logística & Embalagem</h3>
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo Frete Médio (R$)</label>
-              <input type="number" step="0.50" value={logistica.custoFretePadrao} onChange={e => updateConfig("logistica", "custoFretePadrao", e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo Embalagem Média (R$)</label>
-              <input type="number" step="0.10" value={logistica.custoEmbalagemPadrao} onChange={e => updateConfig("logistica", "custoEmbalagemPadrao", e.target.value)} style={inputStyle} />
+          {/* MÃO DE OBRA */}
+          <div style={cardStyle}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#007AFF", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>👷 Mão de Obra</h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Hora Técnica / Operacional (R$)</label>
+                <input type="number" step="0.50" value={trabalho.horaTecnica} onChange={e => updateConfig("trabalho", "horaTecnica", e.target.value)} style={inputStyle} />
+                <p style={{ fontSize: 10, color: "#8E8E93", marginTop: 4 }}>Tempo gasto fatiando, limpando a impressora, removendo suportes.</p>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Hora Modelagem 3D (R$)</label>
+                <input type="number" step="0.50" value={trabalho.horaModelagem} onChange={e => updateConfig("trabalho", "horaModelagem", e.target.value)} style={inputStyle} />
+              </div>
             </div>
           </div>
+
+          {/* DEPRECIAÇÃO */}
+          <div style={cardStyle}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#AF52DE", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>📉 Depreciação</h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Vida Útil Estimada (Horas de Impressão)</label>
+                <input type="number" value={depreciacao.vidaUtilHoras} onChange={e => updateConfig("depreciacao", "vidaUtilHoras", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>% Custo Manutenção (sobre o valor da máquina)</label>
+                <input type="number" value={depreciacao.manutencaoPercent} onChange={e => updateConfig("depreciacao", "manutencaoPercent", e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+          </div>
+
+
+
+          {/* TAXAS & VENDAS */}
+          <div style={cardStyle}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#FF3B30", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>💸 Taxas & Vendas</h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Impostos Padronizados (%)</label>
+                <div style={{ position: "relative" }}>
+                  <input type="number" step="0.5" value={vendas.impostosPercent} onChange={e => updateConfig("vendas", "impostosPercent", e.target.value)} style={inputStyle} />
+                  <span style={{ position: "absolute", right: 12, top: 12, color: "#8E8E93", fontSize: 12 }}>%</span>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Taxa Marketplace Padrão (%)</label>
+                <div style={{ position: "relative" }}>
+                  <input type="number" step="0.5" value={vendas.taxaMarketplacePercent} onChange={e => updateConfig("vendas", "taxaMarketplacePercent", e.target.value)} style={inputStyle} />
+                  <span style={{ position: "absolute", right: 12, top: 12, color: "#8E8E93", fontSize: 12 }}>%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* LOGÍSTICA & EMBALAGEM */}
+          <div style={cardStyle}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#34C759", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>📦 Logística & Embalagem</h3>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo Frete Médio (R$)</label>
+                <input type="number" step="0.50" value={logistica.custoFretePadrao} onChange={e => updateConfig("logistica", "custoFretePadrao", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo Embalagem Média (R$)</label>
+                <input type="number" step="0.10" value={logistica.custoEmbalagemPadrao} onChange={e => updateConfig("logistica", "custoEmbalagemPadrao", e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+          </div>
+
         </div>
 
-      </div>
+        {/* LISTA DE INSUMOS */}
+        <div style={{ ...cardStyle, marginTop: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E" }}>🧴 Lista de Insumos &amp; Consumíveis</h3>
+            <button onClick={addInsumo} style={btnSecondary}>+ Adicionar Insumo</button>
+          </div>
 
-      {/* LISTA DE INSUMOS */}
-      <div style={{ ...cardStyle, marginTop: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E" }}>🧴 Lista de Insumos &amp; Consumíveis</h3>
-          <button onClick={addInsumo} style={btnSecondary}>+ Adicionar Insumo</button>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 8px" }}>
-            <thead>
-              <tr style={{ textAlign: "left", fontSize: 12, color: "#8E8E93" }}>
-                <th style={{ paddingBottom: 8 }}>ITEM</th>
-                <th style={{ paddingBottom: 8 }}>CATEGORIA</th>
-                <th style={{ paddingBottom: 8 }}>CUSTO (R$)</th>
-                <th style={{ paddingBottom: 8, textAlign: "right" }}>AÇÃO</th>
-              </tr>
-            </thead>
-            <tbody>
-              {insumos.map(insumo => (
-                <tr key={insumo.id} style={{ background: "#F9F9F9" }}>
-                  <td style={{ padding: "12px", borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}>{insumo.nome}</td>
-                  <td style={{ padding: "12px" }}><Badge color="#8E8E93">{insumo.categoria}</Badge></td>
-                  <td style={{ padding: "12px", fontWeight: 600 }}>R$ {insumo.custo.toFixed(2)}</td>
-                  <td style={{ padding: "12px", textAlign: "right", borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>
-                    <button onClick={() => removeInsumo(insumo.id)} style={{ border: "none", background: "none", color: "#FF3B30", cursor: "pointer" }}>✕</button>
-                  </td>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 8px" }}>
+              <thead>
+                <tr style={{ textAlign: "left", fontSize: 12, color: "#8E8E93" }}>
+                  <th style={{ paddingBottom: 8 }}>ITEM</th>
+                  <th style={{ paddingBottom: 8 }}>CATEGORIA</th>
+                  <th style={{ paddingBottom: 8 }}>CUSTO (R$)</th>
+                  <th style={{ paddingBottom: 8, textAlign: "right" }}>AÇÃO</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {insumos.map(insumo => (
+                  <tr key={insumo.id} style={{ background: "#F9F9F9" }}>
+                    <td style={{ padding: "12px", borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}>{insumo.nome}</td>
+                    <td style={{ padding: "12px" }}><Badge color="#8E8E93">{insumo.categoria}</Badge></td>
+                    <td style={{ padding: "12px", fontWeight: 600 }}>R$ {insumo.custo.toFixed(2)}</td>
+                    <td style={{ padding: "12px", textAlign: "right", borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>
+                      <button onClick={() => removeInsumo(insumo.id)} style={{ border: "none", background: "none", color: "#FF3B30", cursor: "pointer" }}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-    </div >
-  );
-}
+      </div >
+    );
+  }
