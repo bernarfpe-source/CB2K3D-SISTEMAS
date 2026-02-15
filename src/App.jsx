@@ -2030,72 +2030,82 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       let finalWeights = [];
       let grandTotal = 0;
 
-      // DECISION LOGIC: Use Line Scan if available, otherwise Bag Match
-      if (detectedFilaments.length > 0) {
-        log.push(`Modo Tabela: ${detectedFilaments.length} filamentos encontrados por linha.`);
+      // DECISION LOGIC: Hybrid Verification
+      // 1. Determine the "Correct" Total Weight
+      const maxRaw = Math.max(...rawWeights, 0);
+      let likelyTotal = maxRaw;
+      if (detectedTotalWeight > 0) likelyTotal = detectedTotalWeight;
+
+      // 2. Check if Line Scan results are valid (Sum fits Total)
+      const lineScanSum = detectedFilaments.reduce((a, b) => a + b.weight, 0);
+      const tolerance = 2.0;
+      let usedStrategy = "NONE";
+
+      if (detectedFilaments.length > 0 && Math.abs(likelyTotal - lineScanSum) <= tolerance) {
+        // A. Line Scan is perfect (Sums matches Total)
         finalWeights = detectedFilaments.map(f => f.weight);
-        // Calculate total from parts
-        grandTotal = finalWeights.reduce((a, b) => a + b, 0);
-
-        // Double check if there is a much larger "Total" listed elsewhere?
-        const maxRaw = Math.max(...rawWeights, 0);
-        if (maxRaw > grandTotal * 1.5) {
-          log.push(`Aviso: Existe um valor muito maior (${maxRaw}g) que a soma das partes (${grandTotal}g). Usando partes individuais.`);
-          // We trust the parts more than the total in this case, but let's update totalWeight to be safe
-          // grandTotal = maxRaw; // Optional: Override total? No, keep sum of parts.
-        }
+        grandTotal = likelyTotal;
+        usedStrategy = "LINE_SCAN_PERFECT";
+        log.push(`Modo Tabela: Sucesso (Soma ${lineScanSum.toFixed(1)}g bate com Total).`);
       } else {
-        // STRATEGY B: BAG OF WEIGHTS (Fallback)
-        if (rawWeights.length === 0) {
-          log.push("Erro: Nenhum peso (g) encontrado no texto.");
-        }
+        // B. Line Scan failed or indicated partial data. Try "Subset Sum" from Bag of Weights
+        log.push(`Validação Tabela: Soma das linhas (${lineScanSum.toFixed(1)}g) difere do Total (${likelyTotal}g). Tentando reconstrução matemática...`);
 
-        const maxRaw = Math.max(...rawWeights, 0);
         let scalingFactor = 1;
-
-        if (updates.tempoImpressao && updates.tempoImpressao > 0 && maxRaw > 0) {
-          const gPerMin = maxRaw / updates.tempoImpressao;
+        // Scale Check (if likelyTotal is huge/tiny compared to print time)
+        if (updates.tempoImpressao && updates.tempoImpressao > 0 && likelyTotal > 0) {
+          const gPerMin = likelyTotal / updates.tempoImpressao;
           if (gPerMin > 5.0) scalingFactor = 100;
           else if (gPerMin > 50.0) scalingFactor = 1000;
-
-          if (scalingFactor > 1) log.push(`Ajuste de Escala: dividindo pesos por ${scalingFactor} (detectado erro de unidade)`);
         }
 
         let cleanWeights = rawWeights.map(w => parseFloat((w / scalingFactor).toFixed(2))).sort((a, b) => b - a);
         cleanWeights = cleanWeights.filter(w => w > 0.1);
 
-        grandTotal = cleanWeights[0] || 0;
+        // Re-evaluate Total after scaling
+        const safeTotal = cleanWeights[0] || 0;
         const candidates = cleanWeights.slice(1);
 
-        if (candidates.length === 0 && grandTotal > 0) {
-          finalWeights = [grandTotal];
-        } else {
-          // Subset Sum Logic...
-          let currentSum = 0;
-          let subset = [];
-          const tolerance = 2.0;
+        let subsetFound = false;
+        let subset = [];
 
+        if (candidates.length > 0) {
+          // Subset Sum
+          let currentSum = 0;
           for (const w of candidates) {
-            if (currentSum + w <= grandTotal + tolerance) {
+            if (currentSum + w <= safeTotal + tolerance) {
               subset.push(w);
               currentSum += w;
             }
           }
+          if (Math.abs(safeTotal - currentSum) <= tolerance && subset.length > 0) {
+            subsetFound = true;
+          }
+        }
 
-          if (Math.abs(grandTotal - currentSum) <= tolerance && subset.length > 0) {
-            finalWeights = subset;
-            log.push("Estrutura detectada (Soma): " + subset.length + " itens.");
+        if (subsetFound) {
+          // C. Subset Sum Success (Math worked)
+          finalWeights = subset;
+          grandTotal = safeTotal;
+          usedStrategy = "SUBSET_SUM";
+          log.push(`Reconstrução Matemática: Sucesso! ${subset.length} componentes encontrados.`);
+        } else {
+          // D. Math Failed. Fallback behavior.
+          // Which is better? Partial Line Scan (some filaments) or just Grand Total?
+          if (detectedFilaments.length > 0) {
+            // If we found *something* in the table, let's use it, even if incomplete.
+            // It's better to show "Filament 1, Filament 2" and have the user add the 3rd, 
+            // than to just show "Total".
+            finalWeights = detectedFilaments.map(f => f.weight);
+            grandTotal = likelyTotal; // Keep the known total so user sees the discrepancy
+            usedStrategy = "LINE_SCAN_PARTIAL";
+            log.push("Aviso: Dados parciais da tabela utilizados. Alguns filamentos podem estar faltando.");
           } else {
-            // Final Hail Mary: If we have multiple large numbers, maybe they are just distinct parts?
-            // e.g. "50g" "30g" (Total missed).
-            // BUT usually row match detects this.
-            // Fallback to Main Total.
-            if (candidates.length >= 1) {
-              finalWeights = [grandTotal];
-              log.push("Aviso: Soma não bate. Usando apenas peso total.");
-            } else {
-              finalWeights = [grandTotal];
-            }
+            // E. Nothing worked. Just Total.
+            finalWeights = [likelyTotal];
+            grandTotal = likelyTotal;
+            usedStrategy = "TOTAL_ONLY";
+            log.push("Aviso: Não foi possível detalhar os filamentos. Usando peso total.");
           }
         }
       }
