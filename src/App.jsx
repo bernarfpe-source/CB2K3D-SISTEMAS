@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, createContext, useContext, useRef } from "react";
+import { createWorker } from 'tesseract.js';
 
 // ============================================================
 // CONTEXT & DATA STORE
@@ -1521,7 +1522,7 @@ function ProductsModule() {
   const [editingProduct, setEditingProduct] = useState(null);
 
   const products = data.produtos || [];
-  const filtered = products.filter(p =>
+  const filtered = products.filter(p => p && p.nome).filter(p =>
     p.nome.toLowerCase().includes(search.toLowerCase()) ||
     (p.categoria && p.categoria.toLowerCase().includes(search.toLowerCase()))
   );
@@ -1662,6 +1663,309 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   });
 
   const pasteTargetRef = useRef("main");
+  // STATE: API Keys
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("print3d_gemini_key") || "AIzaSyB6rMwtZ22cFcTstXpb3WsXtoTzbnZ4LN0");
+  const [extracting, setExtracting] = useState(false);
+
+  const saveGeminiKey = (key) => {
+    setGeminiKey(key);
+    localStorage.setItem("print3d_gemini_key", key);
+  };
+
+  // HELPER: Convert Blob to Base64
+  const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  // HELPER: Call Gemini Vision API
+  const handleGeminiExtraction = async (imageInput) => {
+    const key = geminiKey ? geminiKey.trim() : "";
+    if (!key) {
+      alert("Por favor, insira sua chave da API Gemini primeiro!");
+      return null;
+    }
+
+    try {
+      let base64Image = "";
+      if (typeof imageInput === "string" && imageInput.includes("base64,")) {
+        base64Image = imageInput.split("base64,")[1];
+      } else if (imageInput instanceof Blob) {
+        base64Image = await blobToBase64(imageInput);
+      } else {
+        throw new Error("Formato de imagem não suportado (não é Blob nem Base64).");
+      }
+
+      const prompt = `
+        Analise esta imagem de um fatiador de impressão 3D (tabela de resumo ou tela principal).
+        Extraia os seguintes dados em formato JSON estrito:
+        
+        {
+          "tempoTotalMinutos": number, // Converta horas/minutos para total em minutos
+          "pesoTotalGramas": number, // Peso total do print
+          "filamentos": [
+             { "id": 1, "pesoGramas": number, "corEstimada": "string" },
+             { "id": 2, "pesoGramas": number, "corEstimada": "string" }
+          ]
+        }
+        
+        Se houver uma tabela, use os valores da coluna 'Total' para cada filamento.
+        Ignore custos monetários. Foque em PESO (g) e TEMPO.
+        Retorne APENAS o JSON, sem markdown.
+        `;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: "image/png", data: base64Image } }
+            ]
+          }]
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.error) throw new Error(data.error.message);
+
+      const textResponse = data.candidates[0].content.parts[0].text;
+      // Clean markdown if present
+      const jsonStr = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(jsonStr);
+
+    } catch (error) {
+      console.error("Gemini Error:", error);
+
+      // DEBUG: List available models if not found
+      if (error.message.includes("not found") || error.message.includes("not supported")) {
+        try {
+          const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+          const listData = await listResp.json();
+          if (listData.models) {
+            const modelNames = listData.models.map(m => m.name).join("\n");
+            alert("ERRO DE MODELO. Modelos disponíveis para sua chave:\n" + modelNames);
+            return { error: "Modelo errado. Use um destes:\n" + modelNames };
+          }
+        } catch (e) {
+          console.error("List models failed", e);
+        }
+      }
+
+      return { error: error.message };
+    }
+  };
+
+  // HELPER: Pre-process image (Smart Invert for Dark Mode Tables) - KEEPING FOR LOCAL FALLBACK
+  const preprocessImage = async (imageSource) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "Anonymous";
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const w = img.width;
+        const h = img.height;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(resolve, 'image/png');
+      };
+
+      img.onerror = () => resolve(imageSource);
+      if (imageSource instanceof Blob) img.src = URL.createObjectURL(imageSource);
+      else img.src = imageSource;
+    });
+  };
+
+  // OCR EXTRACTION LOGIC (Gemini Vision + Tesseract Fallback)
+
+  const handleExtractData = async () => {
+    const images = form.fotosTecnicas || [];
+    if (images.length === 0) {
+      alert("Adicione uma imagem de print do fatiador primeiro!");
+      return;
+    }
+
+    setExtracting(true);
+    let updates = {};
+    let log = [];
+
+    try {
+      const originalImage = images[images.length - 1];
+
+      // OPTION 1: Gemini Vision (Superior)
+      if (geminiKey) {
+        log.push("Usando Gemini AI Vision...");
+        const geminiData = await handleGeminiExtraction(originalImage);
+
+        if (geminiData && !geminiData.error) {
+          log.push("Gemini processou com sucesso!");
+
+          if (geminiData.tempoTotalMinutos) updates.tempoImpressao = geminiData.tempoTotalMinutos;
+          if (geminiData.pesoTotalGramas) updates.totalWeight = geminiData.pesoTotalGramas;
+
+          const fillets = geminiData.filamentos || [];
+          if (fillets.length > 0) {
+            const newPartes = fillets.map((f, i) => ({
+              id: Date.now() + i,
+              nome: `Filamento ${f.id} (${f.corEstimada || 'Auto'})`,
+              materialId: "",
+              peso: f.pesoGramas,
+              tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.pesoGramas / geminiData.pesoTotalGramas)) : 0,
+              foto: ""
+            }));
+
+            const newComp = newPartes.map(p => ({
+              materialId: "", peso: p.peso, tipo: "", cor: ""
+            }));
+
+            updates.partes = newPartes;
+            updates.composicao = newComp;
+            log.push(`Detectados ${fillets.length} filamentos via AI.`);
+          }
+
+          setForm(prev => ({ ...prev, ...updates }));
+          alert("Dados extraídos via Gemini AI!\n\n" + log.join('\n'));
+          return; // EXIT EARLY
+        } else {
+          log.push("Falha no Gemini: " + (geminiData?.error || "Erro desconhecido"));
+          log.push("Tentando OCR local...");
+        }
+      }
+
+      // OPTION 2: Local OCR (Fallback)
+      log.push("Otimizando tabela (Modo Tabela Local)...");
+      const processedBlob = await preprocessImage(originalImage);
+
+      const worker = await createWorker('eng');
+      // PSM 6 is good for uniform blocks of text like tables
+      await worker.setParameters({
+        tessedit_char_whitelist: '0123456789.,:hms gTotalFilamentoCustoTempo',
+        tessedit_pageseg_mode: '6',
+      });
+
+      log.push("Lendo dados...");
+      const { data: { text } } = await worker.recognize(processedBlob);
+      await worker.terminate();
+
+      console.log("OCR Table Text:", text);
+      const cleanText = text.replace(/\n/g, ' | ');
+      log.push(`Texto: ${cleanText.substring(0, 60)}...`);
+
+      // 1. EXTRACT TIME (Tempo total: 5h0m)
+      const timeRegex = /Tempo\s*total[:\s]*(\d+)\s*h\s*(\d*)\s*m?/i;
+      const timeMatch = text.match(timeRegex);
+
+      if (timeMatch) {
+        let h = parseInt(timeMatch[1]) || 0;
+        let m = parseInt(timeMatch[2]) || 0;
+        let totalMins = (h * 60) + m;
+        updates.tempoImpressao = totalMins;
+        log.push(`Tempo Total: ${h}h ${m}m`);
+      }
+
+      // 2. EXTRACT FILAMENTS FROM TABLE
+      const fillets = [];
+      const lines = text.split('\n');
+
+      for (let line of lines) {
+        line = line.trim();
+        // Match ID at start (1, 2, 3...)
+        const idMatch = line.match(/^(\d+)\s+/);
+        if (idMatch) {
+          const id = parseInt(idMatch[1]);
+          if (id > 20) continue; // Ignore lines like "32 layers"
+
+          // Find all weights in this line
+          const weights = [...line.matchAll(/(\d+[.,]\d+)\s*g/gi)];
+          if (weights.length > 0) {
+            // The LAST weight is the Total for this filament in the summary table
+            const lastWeightStr = weights[weights.length - 1][1].replace(',', '.');
+            const weight = parseFloat(lastWeightStr);
+
+            if (weight > 0) {
+              fillets.push({ id, weight, nome: `Filamento ${id}` });
+            }
+          }
+        }
+      }
+
+      let grandTotal = 0;
+
+      if (fillets.length > 0) {
+        log.push(`Tabela detectada! ${fillets.length} filamentos encontrados.`);
+        grandTotal = fillets.reduce((a, b) => a + b.weight, 0);
+        grandTotal = parseFloat(grandTotal.toFixed(2));
+
+        const newPartes = fillets.map((f, i) => ({
+          id: Date.now() + i,
+          nome: f.nome,
+          materialId: "",
+          peso: f.weight,
+          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.weight / grandTotal)) : 0,
+          foto: ""
+        }));
+
+        const newComp = newPartes.map(p => ({
+          materialId: "", peso: p.peso, tipo: "", cor: ""
+        }));
+
+        updates.partes = newPartes;
+        updates.composicao = newComp;
+        updates.totalWeight = grandTotal;
+
+      } else {
+        // Fallback if table parsing fails
+        log.push("Nenhum filamento detectado no modo tabela. Tentando pegar Total...");
+        // Try to find "Total ... X g" line
+        const totalLineMatch = text.match(/Total.*?(\d+[.,]\d+)\s*g/i);
+        if (totalLineMatch) {
+          grandTotal = parseFloat(totalLineMatch[1].replace(',', '.'));
+          log.push(`Total encontrado: ${grandTotal}g`);
+
+          const newPart = {
+            id: Date.now(), nome: "Peça Principal", materialId: "",
+            peso: grandTotal, tempo: updates.tempoImpressao || 0, foto: ""
+          };
+          updates.partes = [newPart];
+          updates.composicao = [{ materialId: "", peso: grandTotal, tipo: "", cor: "" }];
+          updates.totalWeight = grandTotal;
+        } else {
+          // Absolute fallback - just try to find biggest number
+          const allWeights = text.match(/(\d+[.,]\d+)\s*g/g);
+          if (allWeights) {
+            const ws = allWeights.map(w => parseFloat(w.replace('g', '').replace(',', '.').trim()));
+            const maxW = Math.max(...ws);
+            if (maxW > 0) {
+              grandTotal = maxW;
+              const newPart = { id: Date.now(), nome: "Peça (Estimada)", peso: grandTotal, tempo: updates.tempoImpressao || 0 };
+              updates.partes = [newPart];
+              updates.composicao = [{ peso: grandTotal }];
+              updates.totalWeight = grandTotal;
+              log.push(`Peso Estimado: ${grandTotal}g`);
+            }
+          }
+        }
+      }
+
+      setForm(prev => ({ ...prev, ...updates }));
+      alert("Processamento concluído!\n\n" + log.join('\n'));
+
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao ler tabela: " + error.message);
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   // Removed activeTab state
 
@@ -1762,7 +2066,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   }, []);
 
   return (
-    <Modal title={product ? "Editar Produto" : "Novo Produto"} onClose={onClose} width={900}>
+    <Modal title={product ? "Editar Produto (Atualizado)" : "Novo Produto (Atualizado)"} onClose={onClose} width={900}>
       <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
 
         {/* SECTION 1: INFO (Original) */}
@@ -1870,6 +2174,47 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
                 Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
                 <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
               </p>
+
+              {/* GEMINI KEY CONFIG - RE-ADDED */}
+              <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: 8, borderRadius: 6, border: "1px solid #E5E5EA" }}>
+                <span style={{ fontSize: 16 }}>✨</span>
+                <input
+                  type="password"
+                  placeholder="Cole sua API Key do Google Gemini aqui para IA Avançada..."
+                  value={geminiKey}
+                  onChange={(e) => saveGeminiKey(e.target.value)}
+                  style={{ ...inputStyle, fontSize: 11, height: 28, borderColor: geminiKey ? "#34C759" : "#E5E5EA", flex: 1, margin: 0 }}
+                />
+                <button
+                  onClick={(e) => { e.preventDefault(); window.open("https://aistudio.google.com/app/apikey", "_blank"); }}
+                  style={{ ...btnSecondary, fontSize: 10, padding: "0 8px", height: 28, whiteSpace: "nowrap" }}
+                  title="Obter chave gratuita no Google AI Studio"
+                >
+                  Criar Chave Grátis ↗
+                </button>
+              </div>
+
+
+
+              {/* OCR BUTTON - ALWAYS VISIBLE */}
+              <div style={{ marginBottom: 12 }}>
+                <button
+                  onClick={(e) => { e.preventDefault(); handleExtractData(); }}
+                  disabled={extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0}
+                  style={{
+                    padding: "8px 12px",
+                    background: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#E5E5EA" : "#5856D6",
+                    color: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#8E8E93" : "#fff",
+                    border: "none", borderRadius: 8,
+                    fontSize: 12, fontWeight: 600,
+                    cursor: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "default" : "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                    width: "100%", justifyContent: "center"
+                  }}
+                >
+                  {extracting ? "Processando..." : (!form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "⚡ Adicione um print para extrair dados" : "⚡ Extrair Dados do Print (Beta)"}
+                </button>
+              </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
                 {/* Tech Gallery */}
