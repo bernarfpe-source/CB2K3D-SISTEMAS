@@ -1946,26 +1946,68 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       let detectedFilaments = [];
 
       // STRATEGY A: LINE SCANNING (High Precision for Tables)
-      // Look for lines that have structure like "1 ... 50g" or "Filament 1 ... 50g"
+      // Look for lines that have structure like "1 ... 50g" or just multiple "g" values in a row (Bambu typical)
       const lines = text.split('\n');
-      lines.forEach(line => {
+
+      // 1. First Pass: Detect "Total" row to establish ground truth for units
+      let detectedTotalWeight = 0;
+      lines.forEach(l => {
+        if (l.match(/^Total/i)) {
+          const weights = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
+          if (weights.length > 0) {
+            const lastW = weights[weights.length - 1];
+            let val = parseFloat(lastW[1].replace(',', '.'));
+            if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+            if (val > 0) detectedTotalWeight = val;
+          }
+        }
+      });
+      if (detectedTotalWeight > 0) log.push(`Linha 'Total' detectada: ${detectedTotalWeight}g (Referência)`);
+
+      lines.forEach((line, idx) => {
         const l = line.trim();
         // Check for ID at start (1, 2, 3...)
         const idMatch = l.match(/^(\d+)[.\s)]/);
-        // Check for weight at end or middle
-        const weightMatch = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
 
-        if (idMatch && weightMatch.length > 0) {
-          const id = parseInt(idMatch[1]);
-          if (id > 0 && id < 20) { // Reasonable ID range
-            // Use the LAST weight found in the line (usually the total for that row)
-            const lastW = weightMatch[weightMatch.length - 1];
-            let val = parseFloat(lastW[1].replace(',', '.'));
-            if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+        // OR check if line has multiple weights/lengths typical of a filament row
+        // Bambu line: "0.80 m ... 2.42g ... 8.01g"
+        const weightMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
+        const lengthMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*m\b/gi)]; // matches "m" meters
 
-            if (val > 0) {
-              detectedFilaments.push({ id, weight: val });
-            }
+        let validRow = false;
+        let id = 0;
+
+        if (idMatch) {
+          id = parseInt(idMatch[1]);
+          if (id > 0 && id < 20) validRow = true;
+        } else if (weightMatches.length >= 2 || (weightMatches.length >= 1 && lengthMatches.length >= 1)) {
+          // Strong signal: It has multiple data points, likely a row.
+          // If we are in the first few lines, assign ID based on count
+          if (detectedFilaments.length < 10) {
+            id = detectedFilaments.length + 1;
+            validRow = true;
+            // Don't mistake "Total" line for a filament
+            if (l.match(/^Total/i)) validRow = false;
+          }
+        }
+
+        if (validRow && weightMatches.length > 0) {
+          // Use the LAST weight found in the line (usually the total for that row)
+          const lastW = weightMatches[weightMatches.length - 1];
+          let val = parseFloat(lastW[1].replace(',', '.'));
+          if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+
+          // Sanity check for Decimal Error (e.g. 801 instead of 8.01)
+          // context: if 801 is found, but Total is 119 -> must be 8.01
+          if (detectedTotalWeight > 0 && val > detectedTotalWeight * 2) {
+            val = val / 100; // Suspect missing decimal
+          } else if (detectedTotalWeight > 0 && val > detectedTotalWeight * 1.5) {
+            // If still too big, maybe factor 10?
+            val = val / 10;
+          }
+
+          if (val > 0) {
+            detectedFilaments.push({ id, weight: val });
           }
         }
       });
