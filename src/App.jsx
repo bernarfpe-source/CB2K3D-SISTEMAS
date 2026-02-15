@@ -1973,59 +1973,69 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       let detectedFilaments = [];
       const rawWeights = [];
 
-      // STRATEGY A: LINE SCANNING (High Precision for Tables)
-      // Enhanced for Bambu/Orca: Look for lines with measuring units
+      // STRATEGY A: STATEFUL LINE SCANNING (Better for Multi-line rows)
       const lines = text.split('\n');
+      let pendingId = null;
+      let nextExpectedId = 1;
+
       lines.forEach((line, index) => {
         const l = line.trim();
+        if (l.length < 3) return; // Skip noise
 
-        // 1. Try finding ID at start
-        let idMatch = l.match(/^(\d+)[.\s)]/);
-        let id = idMatch ? parseInt(idMatch[1]) : null;
+        // 1. Check for ID at start of line
+        // Matches: "1", "1.", "1)", "Filament 1", "1 0.5m"
+        const idMatch = l.match(/^(?:filament\s*)?(\d+)(?:[.\s)]|$)/i);
+        let explicitId = idMatch ? parseInt(idMatch[1]) : null;
 
-        // 2. Find all weights in this line
-        // Regex handles: 10.5g, 10,5g, 10g, 10 g
-        const weightMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
+        // Validation: IDs normally fit in 1-20 range.
+        if (explicitId && (explicitId < 1 || explicitId > 20)) explicitId = null;
 
-        // Bambu Strategy: The line might just be "4,27 g 10,13 g 1,48 g 15,88 g" without ID
-        // If we have >= 2 weights in a line, it's likely a row. The LAST one is the row total.
-        if (weightMatches.length >= 2) {
-          const lastW = weightMatches[weightMatches.length - 1];
-          let val = parseFloat(lastW[1].replace(',', '.'));
-          if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+        if (explicitId) {
+          pendingId = explicitId; // We found an ID, store it for this line or next lines
+        }
 
-          // Smart ID: If no ID found at start, try to infer from previous line or sequence
-          if (!id) {
-            // Check previous line for a lone number that could be ID
-            if (index > 0) {
-              const prevLine = lines[index - 1].trim();
-              const prevIdMatch = prevLine.match(/^(\d+)[.\s]*$/); // Just a number
-              if (prevIdMatch) id = parseInt(prevIdMatch[1]);
-              else {
-                // Or prev line has "Measurement in meters" and starts with ID like in user screenshot
-                // "2 1,41 m ..."
-                const prevLineMeters = prevLine.match(/^(\d+).*?m/);
-                if (prevLineMeters) id = parseInt(prevLineMeters[1]);
+        // 2. Check for "Meters" (m) - indicating a header line for a filament in Bambu
+        // If this line has "m" and an explicit ID, it's definitely the start of a block.
+        const hasMeters = /\d+\s*m\b/.test(l);
+        if (hasMeters && explicitId) {
+          pendingId = explicitId;
+        }
+
+        // 3. Check for "Grams" (g) - specific weights
+        const weightMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)\b/gi)];
+
+        if (weightMatches.length > 0) {
+          let idToUse = pendingId;
+
+          // Fallback: If no pending ID, assume sequential if it makes sense
+          if (!idToUse) {
+            if (nextExpectedId === 1) idToUse = 1;
+            else idToUse = nextExpectedId;
+          }
+
+          if (idToUse) {
+            // Get the total weight for this row (Last match is usually total)
+            const lastW = weightMatches[weightMatches.length - 1];
+            let val = parseFloat(lastW[1].replace(',', '.'));
+            if (lastW[2].toLowerCase() === 'kg') val *= 1000;
+
+            if (val > 0) {
+              // Check if we already have this ID (maybe duplicate line read)
+              // Using an index loop to find if we need to update or push
+              const existingIdx = detectedFilaments.findIndex(f => f.id === idToUse);
+
+              if (existingIdx >= 0) {
+                // Update if new value is more plausible (larger often means Total vs Part)
+                if (val > detectedFilaments[existingIdx].weight) {
+                  detectedFilaments[existingIdx].weight = val;
+                }
+              } else {
+                // New Filament
+                detectedFilaments.push({ id: idToUse, weight: val, rawLine: l });
+                nextExpectedId = idToUse + 1;
+                pendingId = null; // Consumed ID
               }
             }
-          }
-
-          // If still no ID, use the 'detectedFilaments.length + 1' as fallback later
-          // For now, accept it if it looks valid
-          if (val > 0) {
-            // heuristic: if we already have this ID, don't overwrite unless confidence is higher? 
-            // Simple approach: Sequence
-            const effectiveId = id || (detectedFilaments.length + 1);
-            detectedFilaments.push({ id: effectiveId, weight: val, rawLine: l });
-          }
-        }
-        // Standard Strategy: ID + Single Weight (e.g. "1 ... 50g")
-        else if (id && weightMatches.length === 1) {
-          const m = weightMatches[0];
-          let val = parseFloat(m[1].replace(',', '.'));
-          if (m[2].toLowerCase() === 'kg') val *= 1000;
-          if (val > 0) {
-            detectedFilaments.push({ id, weight: val, rawLine: l });
           }
         }
       });
