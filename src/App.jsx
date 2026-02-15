@@ -1789,7 +1789,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         const avgBrightness = totalBrightness / (data.length / 4);
         const isDark = avgBrightness < 100;
 
-        // 2. Process Pixels (Grayscale + Invert if Dark + Threshold)
+        // 2. Process Pixels (Grayscale + Invert if Dark)
         for (let i = 0; i < data.length; i += 4) {
           let r = data[i], g = data[i + 1], b = data[i + 2];
 
@@ -1799,11 +1799,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           // Invert if dark mode detected (make text black, bg white)
           if (isDark) gray = 255 - gray;
 
-          // Increase Contrast / Threshold (Binarization)
-          // Simple threshold at 180 (light gray becomes white, dark gray becomes black)
-          // Adjust threshold based on whether we inverted or not
-          const threshold = 160;
-          gray = (gray > threshold) ? 255 : 0;
+          // REMOVED THRESHOLDING: Tesseract often does better with grayscale gradients
+          // than hard black/white thresholds on anti-aliased text.
 
           data[i] = gray;     // R
           data[i + 1] = gray;   // G
@@ -1941,178 +1938,93 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       }
 
       // 2. EXTRACT FILAMENTS / WEIGHTS
-      const inputs = [];
+      // STRATEGY: BAG OF WEIGHTS (Robust to bad formatting)
       const rawWeights = [];
-      let detectedFilaments = [];
+      const tokens = text.split(/[\s|]+/); // Split by any whitespace or separator
 
-      // STRATEGY A: LINE SCANNING (High Precision for Tables)
-      // Look for lines that have structure like "1 ... 50g" or just multiple "g" values in a row (Bambu typical)
-      const lines = text.split('\n');
-
-      // 1. First Pass: Detect "Total" row to establish ground truth for units
-      let detectedTotalWeight = 0;
-      lines.forEach(l => {
-        if (l.match(/^Total/i)) {
-          const weights = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
-          if (weights.length > 0) {
-            const lastW = weights[weights.length - 1];
-            let val = parseFloat(lastW[1].replace(',', '.'));
-            if (lastW[2].toLowerCase() === 'kg') val *= 1000;
-            if (val > 0) detectedTotalWeight = val;
-          }
-        }
-      });
-      if (detectedTotalWeight > 0) log.push(`Linha 'Total' detectada: ${detectedTotalWeight}g (Referência)`);
-
-      lines.forEach((line, idx) => {
-        const l = line.trim();
-        // Check for ID at start (1, 2, 3...)
-        const idMatch = l.match(/^(\d+)[.\s)]/);
-
-        // OR check if line has multiple weights/lengths typical of a filament row
-        // Bambu line: "0.80 m ... 2.42g ... 8.01g"
-        const weightMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi)];
-        const lengthMatches = [...l.matchAll(/(\d+[.,]?\d*)\s*m\b/gi)]; // matches "m" meters
-
-        let validRow = false;
-        let id = 0;
-
-        if (idMatch) {
-          id = parseInt(idMatch[1]);
-          if (id > 0 && id < 20) validRow = true;
-        } else if (weightMatches.length >= 2 || (weightMatches.length >= 1 && lengthMatches.length >= 1)) {
-          // Strong signal: It has multiple data points, likely a row.
-          // If we are in the first few lines, assign ID based on count
-          if (detectedFilaments.length < 10) {
-            id = detectedFilaments.length + 1;
-            validRow = true;
-            // Don't mistake "Total" line for a filament
-            if (l.match(/^Total/i)) validRow = false;
-          }
-        }
-
-        if (validRow && weightMatches.length > 0) {
-          // Use the LAST weight found in the line (usually the total for that row)
-          const lastW = weightMatches[weightMatches.length - 1];
-          let val = parseFloat(lastW[1].replace(',', '.'));
-          if (lastW[2].toLowerCase() === 'kg') val *= 1000;
-
-          // Sanity check for Decimal Error (e.g. 801 instead of 8.01)
-          // context: if 801 is found, but Total is 119 -> must be 8.01
-          if (detectedTotalWeight > 0 && val > detectedTotalWeight * 2) {
-            val = val / 100; // Suspect missing decimal
-          } else if (detectedTotalWeight > 0 && val > detectedTotalWeight * 1.5) {
-            // If still too big, maybe factor 10?
-            val = val / 10;
-          }
-
-          if (val > 0) {
-            detectedFilaments.push({ id, weight: val });
-          }
-        }
-      });
-
-      // Collect raw weights for fallback
-      const tokens = text.split(/[\n\t|]/);
-      tokens.forEach(token => {
-        const t = token.trim();
+      tokens.forEach(t => {
+        // Regex allows: "12.5g", "12,5g", "12g"
         const matches = t.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi);
         for (const m of matches) {
           let val = parseFloat(m[1].replace(',', '.'));
           if (m[2].toLowerCase() === 'kg') val *= 1000;
-          if (!isNaN(val) && val > 0 && val < 50000) rawWeights.push(val);
+          if (!isNaN(val) && val > 0.5 && val < 50000) rawWeights.push(val); // Ignore < 0.5g (noise)
         }
       });
-
-      console.log("Line Scan Results:", detectedFilaments);
-      console.log("Raw Weights Found:", rawWeights);
+      console.log("All Weights Found:", rawWeights);
 
       let finalWeights = [];
       let grandTotal = 0;
 
-      // DECISION LOGIC: Hybrid Verification
-      // 1. Determine the "Correct" Total Weight
-      const maxRaw = Math.max(...rawWeights, 0);
-      let likelyTotal = maxRaw;
-      if (detectedTotalWeight > 0) likelyTotal = detectedTotalWeight;
+      // 1. Identification Phase
+      // The largest number is almost certainly the Grand Total (or Cumulative Total)
+      // Sort descending
+      const sortedWeights = [...rawWeights].sort((a, b) => b - a);
 
-      // 2. Check if Line Scan results are valid (Sum fits Total)
-      const lineScanSum = detectedFilaments.reduce((a, b) => a + b.weight, 0);
-      const tolerance = 2.0;
-      let usedStrategy = "NONE";
+      if (sortedWeights.length > 0) {
+        grandTotal = sortedWeights[0]; // Largest is Total
+        log.push(`Total Detectado (Maior valor): ${grandTotal}g`);
 
-      if (detectedFilaments.length > 0 && Math.abs(likelyTotal - lineScanSum) <= tolerance) {
-        // A. Line Scan is perfect (Sums matches Total)
-        finalWeights = detectedFilaments.map(f => f.weight);
-        grandTotal = likelyTotal;
-        usedStrategy = "LINE_SCAN_PERFECT";
-        log.push(`Modo Tabela: Sucesso (Soma ${lineScanSum.toFixed(1)}g bate com Total).`);
-      } else {
-        // B. Line Scan failed or indicated partial data. Try "Subset Sum" from Bag of Weights
-        log.push(`Validação Tabela: Soma das linhas (${lineScanSum.toFixed(1)}g) difere do Total (${likelyTotal}g). Tentando reconstrução matemática...`);
+        // 2. Component Phase
+        // Identifying parts: 
+        // A. If we have a math match (Sum of X, Y, Z approx Total) -> Perfect
+        // B. If not, exclude values that are clearly "Sub-totals" or "Duplicates" of the Total?
 
-        let scalingFactor = 1;
-        // Scale Check (if likelyTotal is huge/tiny compared to print time)
-        if (updates.tempoImpressao && updates.tempoImpressao > 0 && likelyTotal > 0) {
-          const gPerMin = likelyTotal / updates.tempoImpressao;
-          if (gPerMin > 5.0) scalingFactor = 100;
-          else if (gPerMin > 50.0) scalingFactor = 1000;
-        }
+        const candidates = sortedWeights.slice(1); // Detect components from the rest
 
-        let cleanWeights = rawWeights.map(w => parseFloat((w / scalingFactor).toFixed(2))).sort((a, b) => b - a);
-        cleanWeights = cleanWeights.filter(w => w > 0.1);
+        // Filter candidates: 
+        // Sometimes OCR reads the same number twice (e.g. in a summary list and a detail list)
+        // Or reads "119.06" as "119.06" and "19.06".
+        // Let's filter unique values? Or keep duplicates (maybe 2 filaments have same weight)?
+        // Let's keep distinct instances for now.
 
-        // Re-evaluate Total after scaling
-        const safeTotal = cleanWeights[0] || 0;
-        const candidates = cleanWeights.slice(1);
-
-        let subsetFound = false;
+        // Try Subset Sum First (Most accurate)
+        let currentSum = 0;
         let subset = [];
+        const tolerance = grandTotal * 0.05; // 5% tolerance for bad OCR
 
-        if (candidates.length > 0) {
-          // Subset Sum
-          let currentSum = 0;
-          for (const w of candidates) {
-            if (currentSum + w <= safeTotal + tolerance) {
-              subset.push(w);
-              currentSum += w;
-            }
-          }
-          if (Math.abs(safeTotal - currentSum) <= tolerance && subset.length > 0) {
-            subsetFound = true;
+        // Heuristic: Pure "Bag" - just take numbers that add up to Total
+        for (const w of candidates) {
+          if (currentSum + w <= grandTotal + tolerance) {
+            subset.push(w);
+            currentSum += w;
           }
         }
 
-        if (subsetFound) {
-          // C. Subset Sum Success (Math worked)
+        if (Math.abs(currentSum - grandTotal) <= tolerance && subset.length > 0) {
           finalWeights = subset;
-          grandTotal = safeTotal;
-          usedStrategy = "SUBSET_SUM";
-          log.push(`Reconstrução Matemática: Sucesso! ${subset.length} componentes encontrados.`);
+          log.push(`Componentes identificados pela soma: ${subset.join(', ')}`);
         } else {
-          // D. Math Failed. Fallback behavior.
-          // Which is better? Partial Line Scan (some filaments) or just Grand Total?
-          if (detectedFilaments.length > 0) {
-            // If we found *something* in the table, let's use it, even if incomplete.
-            // It's better to show "Filament 1, Filament 2" and have the user add the 3rd, 
-            // than to just show "Total".
-            finalWeights = detectedFilaments.map(f => f.weight);
-            grandTotal = likelyTotal; // Keep the known total so user sees the discrepancy
-            usedStrategy = "LINE_SCAN_PARTIAL";
-            log.push("Aviso: Dados parciais da tabela utilizados. Alguns filamentos podem estar faltando.");
+          // Fallback: The OCR might have missed the "Total" line completely, and detected pieces are just pieces.
+          // OR The "Total" is correct, but pieces are missing.
+
+          // New Strategy: "The Big Filter"
+          // If we have multiple numbers, and they are significantly smaller than the max, assume they are filaments.
+          // e.g. [119, 64, 45, 9, 3] -> 119 is Total. 64+45+9 approx 119.
+
+          // Let's just return ALL candidates that are likely components (e.g. < 90% of Total)
+          // This might include "garbage" numbers but better to let user delete than type.
+          const likelyComponents = candidates.filter(w => w < grandTotal * 0.95);
+
+          if (likelyComponents.length > 0) {
+            finalWeights = likelyComponents;
+            log.push(`Aviso: Soma não exata. Trazendo todos os valores menores encontrados (${likelyComponents.length} itens).`);
           } else {
-            // E. Nothing worked. Just Total.
-            finalWeights = [likelyTotal];
-            grandTotal = likelyTotal;
-            usedStrategy = "TOTAL_ONLY";
-            log.push("Aviso: Não foi possível detalhar os filamentos. Usando peso total.");
+            // No components found? Just one big block?
+            finalWeights = [grandTotal];
           }
         }
+      } else {
+        log.push("Erro: Nenhum peso encontrado.");
       }
 
       updates.totalWeight = parseFloat(grandTotal.toFixed(2));
 
       const fillets = [];
+      // If we found specific components, use them. 
+      // If we only found the Grand Total (finalWeights has 1 item and it matches grandTotal), treat as 1 filament.
+      if (finalWeights.length === 0 && grandTotal > 0) finalWeights = [grandTotal];
+
       fillets.push(...finalWeights.map((w, i) => ({
         id: i + 1,
         weight: w,
