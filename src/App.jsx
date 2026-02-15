@@ -2045,6 +2045,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
       updates.totalWeight = grandTotal;
 
+      const fillets = [];
       // Map to Fillets object for existing logic compatibility
       fillets.push(...finalWeights.map((w, i) => ({
         id: i + 1,
