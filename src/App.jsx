@@ -77,6 +77,20 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("theme") === "dark");
+
+  useEffect(() => {
+    if (darkMode) {
+      document.body.classList.add("dark-mode");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.body.classList.remove("dark-mode");
+      localStorage.setItem("theme", "light");
+    }
+  }, [darkMode]);
+
+  const toggleTheme = () => setDarkMode(!darkMode);
+
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth <= 768;
@@ -205,15 +219,14 @@ export default function App() {
 
   return (
     <AppContext.Provider value={{ data, setData, showToast, navigateTo, navigationData, setNavigationData }}>
-      <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif", display: "flex", height: "100vh", background: "#F2F2F7", color: "#1C1C1E", overflow: "hidden" }}>
+      <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif", display: "flex", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", transition: "background 0.3s, color 0.3s" }}>
 
-        {/* SIDEBAR */}
         {/* SIDEBAR */}
         <aside style={{
           width: isMobile ? (sidebarOpen ? "80%" : 0) : (sidebarOpen ? 240 : 64),
           maxWidth: 300,
-          background: "#FFFFFF",
-          borderRight: "1px solid #E5E5EA",
+          background: "var(--bg-secondary)",
+          borderRight: "1px solid var(--border-color)",
           transition: "all 0.3s cubic-bezier(0.4,0,0.2,1)",
           display: "flex",
           flexDirection: "column",
@@ -222,11 +235,11 @@ export default function App() {
           position: isMobile ? "fixed" : "static",
           zIndex: 100,
           height: "100%",
-          boxShadow: isMobile && sidebarOpen ? "0 0 50px rgba(0,0,0,0.5)" : "none",
+          boxShadow: isMobile && sidebarOpen ? "0 0 50px var(--shadow-color)" : "none",
         }}>
-          <div style={{ padding: sidebarOpen ? "20px 16px" : "20px 12px", borderBottom: "1px solid #E5E5EA", display: "flex", alignItems: "center", gap: 10, minHeight: 68 }}>
+          <div style={{ padding: sidebarOpen ? "20px 16px" : "20px 12px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: 10, minHeight: 68 }}>
             <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "transparent", border: "none", padding: 0, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-              {isMobile && sidebarOpen ? <span style={{ fontSize: 24 }}>✕</span> : (
+              {isMobile && sidebarOpen ? <span style={{ fontSize: 24, color: "var(--text-primary)" }}>✕</span> : (
                 <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 8, boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}>
                   <rect width="100" height="100" fill="#00589F" />
                   {/* Nozzle */}
@@ -241,8 +254,8 @@ export default function App() {
             </button>
             {sidebarOpen && (
               <div style={{ overflow: "hidden" }}>
-                <div style={{ fontWeight: 600, fontSize: 15, color: "#000000", letterSpacing: -0.2 }}>CB2K3D</div>
-                <div style={{ fontSize: 11, color: "#8E8E93" }}>SISTEMAS</div>
+                <div style={{ fontWeight: 600, fontSize: 15, color: "var(--text-primary)", letterSpacing: -0.2 }}>CB2K3D</div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>SISTEMAS</div>
               </div>
             )}
           </div>
@@ -251,21 +264,22 @@ export default function App() {
             {modules.map((m, i) => {
               if (m.type === "header") {
                 return sidebarOpen ? (
-                  <div key={i} style={{ fontSize: 11, fontWeight: 600, color: "#8E8E93", textTransform: "uppercase", padding: "16px 12px 6px", letterSpacing: 0.5 }}>
+                  <div key={i} style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", padding: "16px 12px 6px", letterSpacing: 0.5 }}>
                     {m.label}
                   </div>
                 ) : <div key={i} style={{ height: 16 }} />;
               }
+              const isActive = activeModule === m.key;
               return (
                 <button key={m.key} onClick={() => setActiveModule(m.key)} style={{
                   display: "flex", alignItems: "center", gap: 12,
                   padding: sidebarOpen ? "8px 12px" : "10px 0",
                   justifyContent: sidebarOpen ? "flex-start" : "center",
-                  background: activeModule === m.key ? "#F2F2F7" : "transparent",
+                  background: isActive ? "var(--bg-primary)" : "transparent",
                   borderRadius: 8, cursor: "pointer",
-                  color: activeModule === m.key ? "#007AFF" : "#48484A",
+                  color: isActive ? "var(--accent-color)" : "var(--text-secondary)",
                   border: "none",
-                  fontSize: 13, fontWeight: activeModule === m.key ? 600 : 400, transition: "all 0.2s",
+                  fontSize: 13, fontWeight: isActive ? 600 : 400, transition: "all 0.2s",
                   fontFamily: "inherit", width: "100%",
                 }}>
                   <span style={{ fontSize: 18, flexShrink: 0 }}>{m.icon}</span>
@@ -275,34 +289,45 @@ export default function App() {
             })}
           </nav>
 
-          <div style={{ padding: 16, borderTop: "1px solid #E5E5EA" }}>
-            {sidebarOpen && <div style={{ fontSize: 11, color: "#8E8E93", textAlign: "center" }}>v2.2 • Apple Light</div>}
+          <div style={{ padding: 16, borderTop: "1px solid var(--border-color)" }}>
+            {sidebarOpen && <div style={{ fontSize: 11, color: "var(--text-secondary)", textAlign: "center" }}>v2.2 • {darkMode ? "Dark Mode" : "Light Mode"}</div>}
           </div>
         </aside>
-        {isMobile && sidebarOpen && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 99 }} />}
+        {isMobile && sidebarOpen && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 99 }} />}
 
         {/* MAIN */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {/* TOPBAR */}
           <header style={{
-            padding: "16px 32px", borderBottom: "1px solid #E5E5EA",
+            padding: "16px 32px", borderBottom: "1px solid var(--border-color)",
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            background: "rgba(255,255,255,0.8)", backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
+            background: "var(--header-bg)", backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)", transition: "background 0.3s"
           }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 {isMobile && (
-                  <button onClick={() => setSidebarOpen(true)} style={{ background: "transparent", border: "none", fontSize: 24, padding: 4, cursor: "pointer" }}>☰</button>
+                  <button onClick={() => setSidebarOpen(true)} style={{ background: "transparent", border: "none", fontSize: 24, padding: 4, cursor: "pointer", color: "var(--text-primary)" }}>☰</button>
                 )}
-                <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 28, fontWeight: 700, color: "#000000", letterSpacing: -0.6 }}>
+                <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 28, fontWeight: 700, color: "var(--text-primary)", letterSpacing: -0.6 }}>
                   {modules.find(m => m.key === activeModule)?.label}
                 </h1>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <span style={{ fontSize: 13, color: "#8E8E93", fontWeight: 500 }}>{new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</span>
-              <div onClick={handleLogout} title="Sair" style={{ cursor: "pointer", width: 32, height: 32, borderRadius: "50%", background: "#34C759", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600, color: "#fff", transition: "transform 0.2s" }}>A</div>
+              <button
+                onClick={toggleTheme}
+                title={darkMode ? "Mudar para Claro" : "Mudar para Escuro"}
+                style={{
+                  background: "transparent", border: "1px solid var(--border-color)",
+                  width: 32, height: 32, borderRadius: 8, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16
+                }}
+              >
+                {darkMode ? "☀️" : "🌙"}
+              </button>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</span>
+              <div onClick={handleLogout} title="Sair" style={{ cursor: "pointer", width: 32, height: 32, borderRadius: "50%", background: "var(--success-color)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600, color: "#fff", transition: "transform 0.2s" }}>A</div>
             </div>
           </header>
 
@@ -378,12 +403,13 @@ function LoginPage({ onLogin, toast }) {
   return (
     <div style={{
       height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "#F2F2F7", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif"
+      background: "var(--bg-primary)", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
+      color: "var(--text-primary)"
     }}>
       <div style={{
-        width: 360, padding: 40, background: "#fff", borderRadius: 20,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.05)", textAlign: "center",
-        border: "1px solid #E5E5EA"
+        width: 360, padding: 40, background: "var(--bg-secondary)", borderRadius: 20,
+        boxShadow: "0 20px 60px var(--shadow-color)", textAlign: "center",
+        border: "1px solid var(--border-color)"
       }}>
         <div style={{ width: 120, height: 120, margin: "0 auto 24px" }}>
           <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ borderRadius: 12, boxShadow: "0 10px 30px rgba(0,88,159,0.3)" }}>
@@ -399,9 +425,9 @@ function LoginPage({ onLogin, toast }) {
             <text x="50" y="90" fontSize="16" fontWeight="bold" fill="white" textAnchor="middle" fontFamily="Arial, sans-serif" style={{ display: 'none' }}>CB2K3D</text>
           </svg>
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 8px", color: "#1C1C1E", letterSpacing: -0.5 }}>CB2K3D SISTEMAS</h1>
-        <p style={{ fontSize: 14, color: "#8E8E93", margin: "0 0 32px" }}>Faça login para continuar</p>
-        <div style={{ fontSize: 12, color: "#FF9500", background: "rgba(255,149,0,0.1)", padding: 8, borderRadius: 6, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 8px", color: "var(--text-primary)", letterSpacing: -0.5 }}>CB2K3D SISTEMAS</h1>
+        <p style={{ fontSize: 14, color: "var(--text-secondary)", margin: "0 0 32px" }}>Faça login para continuar</p>
+        <div style={{ fontSize: 12, color: "var(--warning-color)", background: "rgba(255,149,0,0.1)", padding: 8, borderRadius: 6, marginBottom: 16 }}>
           Padrão: <b>admin</b> / <b>123</b>
         </div>
 
@@ -410,23 +436,23 @@ function LoginPage({ onLogin, toast }) {
             type="text" placeholder="Usuário (admin)"
             value={user} onChange={e => setUser(e.target.value)}
             style={{
-              padding: "14px", borderRadius: 12, border: "1px solid #E5E5EA",
-              background: "#F2F2F7", fontSize: 15, outline: "none",
-              color: "#1C1C1E"
+              padding: "14px", borderRadius: 12, border: "1px solid var(--border-color)",
+              background: "var(--input-bg)", fontSize: 15, outline: "none",
+              color: "var(--text-primary)"
             }}
           />
           <input
             type="password" placeholder="Senha (admin)"
             value={pass} onChange={e => setPass(e.target.value)}
             style={{
-              padding: "14px", borderRadius: 12, border: "1px solid #E5E5EA",
-              background: "#F2F2F7", fontSize: 15, outline: "none",
-              color: "#1C1C1E"
+              padding: "14px", borderRadius: 12, border: "1px solid var(--border-color)",
+              background: "var(--input-bg)", fontSize: 15, outline: "none",
+              color: "var(--text-primary)"
             }}
           />
           <button type="submit" style={{
             padding: "14px", borderRadius: 12, border: "none",
-            background: "#007AFF", color: "#fff", fontSize: 16, fontWeight: 600,
+            background: "var(--accent-color)", color: "#fff", fontSize: 16, fontWeight: 600,
             cursor: "pointer", marginTop: 8, transition: "background 0.2s"
           }}>
             Entrar
@@ -521,44 +547,45 @@ const fornecedorFields = [
 // SHARED COMPONENTS
 // ============================================================
 const cardStyle = {
-  background: "#FFFFFF",
-  border: "1px solid #E5E5EA",
+  background: "var(--bg-secondary)",
+  border: "1px solid var(--border-color)",
   borderRadius: 12,
   padding: 24,
-  boxShadow: "0 4px 12px rgba(0,0,0,0.03)",
+  boxShadow: "0 4px 12px var(--shadow-color)",
+  color: "var(--text-primary)",
 };
 
 const btnPrimary = {
-  background: "#007AFF",
+  background: "var(--accent-color)",
   border: "none", borderRadius: 8, color: "#fff",
   padding: "8px 16px", cursor: "pointer", fontWeight: 500,
   fontSize: 13, fontFamily: "inherit", transition: "all 0.2s",
 };
 
 const btnSecondary = {
-  background: "#F2F2F7",
-  border: "none", borderRadius: 8, color: "#007AFF",
+  background: "var(--bg-primary)",
+  border: "none", borderRadius: 8, color: "var(--accent-color)",
   padding: "8px 16px", cursor: "pointer", fontWeight: 500,
   fontSize: 13, fontFamily: "inherit",
 };
 
 const inputStyle = {
-  background: "#F2F2F7", border: "1px solid transparent",
-  borderRadius: 8, padding: "10px 12px", color: "#1C1C1E", fontSize: 15,
+  background: "var(--input-bg)", border: "1px solid transparent",
+  borderRadius: 8, padding: "10px 12px", color: "var(--text-primary)", fontSize: 15,
   width: "100%", outline: "none", fontFamily: "inherit", transition: "all 0.2s",
   textTransform: "uppercase",
 };
 
-function StatCard({ icon, label, value, sub, color = "#007AFF" }) {
+function StatCard({ icon, label, value, sub, color = "var(--accent-color)" }) {
   return (
     <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 16, flex: "1 1 200px", minWidth: 200 }}>
       <div style={{ width: 44, height: 44, borderRadius: 10, background: color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0, color: "#fff" }}>
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: 13, color: "#8E8E93", fontWeight: 500, marginBottom: 2 }}>{label}</div>
-        <div style={{ fontSize: 24, fontWeight: 600, color: "#000000", letterSpacing: -0.5 }}>{value}</div>
-        {sub && <div style={{ fontSize: 12, color: "#8E8E93" }}>{sub}</div>}
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500, marginBottom: 2 }}>{label}</div>
+        <div style={{ fontSize: 24, fontWeight: 600, color: "var(--text-primary)", letterSpacing: -0.5 }}>{value}</div>
+        {sub && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{sub}</div>}
       </div>
     </div>
   );
@@ -611,8 +638,8 @@ function Modal({ title, onClose, children, width = 560 }) {
         boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#f1f5f9" }}>{title}</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "var(--text-primary)" }}>{title}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-secondary)", fontSize: 20, cursor: "pointer" }}>✕</button>
         </div>
         {children}
       </div>
@@ -714,15 +741,15 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
     const update = (k, v) => setForm(prev => ({ ...prev, [k]: parseFloat(v) || 0 }));
 
     // SECTION STYLE
-    const sectionHeaderStyle = { fontSize: 12, fontWeight: 700, color: "#4B5563", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid #E5E7EB", paddingBottom: 6 };
-    const rowStyle = { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8, color: "#374151" };
+    const sectionHeaderStyle = { fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-color)", paddingBottom: 6 };
+    const rowStyle = { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8, color: "var(--text-primary)" };
     const valStyle = { fontWeight: 600, fontFamily: "monospace" };
 
     return (
-      <div style={{ background: "#F9FAFB", borderRadius: 16, padding: 24, marginBottom: 24, border: "1px solid #E5E7EB", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-        <h4 style={{ margin: "0 0 24px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", color: "#1F2937", letterSpacing: 0.5, borderBottom: "2px solid #E5E7EB", paddingBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ background: "var(--bg-primary)", borderRadius: 16, padding: 24, marginBottom: 24, border: "1px solid var(--border-color)", boxShadow: "0 1px 3px var(--shadow-color)" }}>
+        <h4 style={{ margin: "0 0 24px", fontSize: 14, fontWeight: 800, textTransform: "uppercase", color: "var(--text-primary)", letterSpacing: 0.5, borderBottom: "2px solid var(--border-color)", paddingBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>📊 Hub de Custos</span>
-          <div style={{ fontSize: 12, fontWeight: 500, color: "#6B7280" }}>Baseado nas configurações globais</div>
+          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>Baseado nas configurações globais</div>
         </h4>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32 }}>
