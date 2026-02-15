@@ -1787,20 +1787,22 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
         }
         const avgBrightness = totalBrightness / (data.length / 4);
-        const isDark = avgBrightness < 100;
+        const isDark = avgBrightness < 128; // Standard cutoff
 
-        // 2. Process Pixels (Grayscale + Invert if Dark)
+        // 2. Process Pixels (Grayscale + Invert if Dark + High Contrast)
         for (let i = 0; i < data.length; i += 4) {
           let r = data[i], g = data[i + 1], b = data[i + 2];
 
-          // Grayscale (Luminosity method)
+          // Grayscale
           let gray = 0.299 * r + 0.587 * g + 0.114 * b;
 
           // Invert if dark mode detected (make text black, bg white)
           if (isDark) gray = 255 - gray;
 
-          // REMOVED THRESHOLDING: Tesseract often does better with grayscale gradients
-          // than hard black/white thresholds on anti-aliased text.
+          // High Contrast Threshold (Binarization)
+          // Make it crisp for Tesseract
+          const threshold = 180;
+          gray = (gray > threshold) ? 255 : 0;
 
           data[i] = gray;     // R
           data[i + 1] = gray;   // G
@@ -1874,17 +1876,17 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       }
 
       // OPTION 2: Local OCR (Fallback)
-      log.push("Otimizando tabela (Modo Tabela Local)...");
+      log.push("Otimizando tabela (Modo Tabela)...");
       const processedBlob = await preprocessImage(originalImage);
 
       const worker = await createWorker('eng');
-      // Use default PSM (3) for better auto-layout detection
-      // Remove whitelist to allow Tesseract to recognize headers/labels correctly (e.g. "Peso", "Weight")
+      // PSM 6 is good for uniform blocks of text like tables
       await worker.setParameters({
-        tessedit_pageseg_mode: '3',
+        tessedit_char_whitelist: '0123456789.,:hms kigTotalFilamentoCustoTempo', // Safe whitelist for numbers/units
+        tessedit_pageseg_mode: '6',
       });
 
-      log.push("Lendo dados (Modo Genérico)...");
+      log.push("Lendo dados (Modo Tabela)...");
       const { data: { text } } = await worker.recognize(processedBlob);
       await worker.terminate();
 
