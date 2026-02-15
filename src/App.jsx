@@ -1377,6 +1377,9 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         }}
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
+      <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v1.0.5 (Atualizado {new Date().toLocaleTimeString()})
+      </p>
     </div>
   );
 }
