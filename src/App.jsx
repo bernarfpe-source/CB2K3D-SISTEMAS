@@ -1762,7 +1762,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     }
   };
 
-  // HELPER: Pre-process image (Smart Invert for Dark Mode Tables) - KEEPING FOR LOCAL FALLBACK
+  // HELPER: Pre-process image (Smart Invert for Dark Mode Tables) - IMPROVED
   const preprocessImage = async (imageSource) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -1776,6 +1776,41 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         canvas.width = w;
         canvas.height = h;
         ctx.drawImage(img, 0, 0);
+
+        // Get raw pixel data
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+
+        // 1. Analyze Brightness (Is it Dark Mode?)
+        let totalBrightness = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+        }
+        const avgBrightness = totalBrightness / (data.length / 4);
+        const isDark = avgBrightness < 100;
+
+        // 2. Process Pixels (Grayscale + Invert if Dark + Threshold)
+        for (let i = 0; i < data.length; i += 4) {
+          let r = data[i], g = data[i + 1], b = data[i + 2];
+
+          // Grayscale (Luminosity method)
+          let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+
+          // Invert if dark mode detected (make text black, bg white)
+          if (isDark) gray = 255 - gray;
+
+          // Increase Contrast / Threshold (Binarization)
+          // Simple threshold at 180 (light gray becomes white, dark gray becomes black)
+          // Adjust threshold based on whether we inverted or not
+          const threshold = 160;
+          gray = (gray > threshold) ? 255 : 0;
+
+          data[i] = gray;     // R
+          data[i + 1] = gray;   // G
+          data[i + 2] = gray;   // B
+        }
+
+        ctx.putImageData(imageData, 0, 0);
         canvas.toBlob(resolve, 'image/png');
       };
 
@@ -1846,118 +1881,211 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       const processedBlob = await preprocessImage(originalImage);
 
       const worker = await createWorker('eng');
-      // PSM 6 is good for uniform blocks of text like tables
+      // Use default PSM (3) for better auto-layout detection
+      // Remove whitelist to allow Tesseract to recognize headers/labels correctly (e.g. "Peso", "Weight")
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789.,:hms gTotalFilamentoCustoTempo',
-        tessedit_pageseg_mode: '6',
+        tessedit_pageseg_mode: '3',
       });
 
-      log.push("Lendo dados...");
+      log.push("Lendo dados (Modo Genérico)...");
       const { data: { text } } = await worker.recognize(processedBlob);
       await worker.terminate();
 
-      console.log("OCR Table Text:", text);
+      console.log("OCR Text:", text);
       const cleanText = text.replace(/\n/g, ' | ');
-      log.push(`Texto: ${cleanText.substring(0, 60)}...`);
+      log.push(`Texto extraído: ${cleanText.substring(0, 50)}...`);
 
       // 1. EXTRACT TIME (Tempo total: 5h0m)
-      const timeRegex = /Tempo\s*total[:\s]*(\d+)\s*h\s*(\d*)\s*m?/i;
-      const timeMatch = text.match(timeRegex);
+      let timeFound = false;
+      let totalMins = 0;
+
+      // Flexible Time Regex: allows "Tempo total:", "Total time:", "5h 30m", "5h30m", "5 h 30 m"
+      const simpleTimeRegex = /(?:tempo|time|total|estimado).*?(\d+)\s*h\s*(\d*)\s*m?/i;
+      let timeMatch = text.match(simpleTimeRegex);
 
       if (timeMatch) {
-        let h = parseInt(timeMatch[1]) || 0;
-        let m = parseInt(timeMatch[2]) || 0;
-        let totalMins = (h * 60) + m;
-        updates.tempoImpressao = totalMins;
-        log.push(`Tempo Total: ${h}h ${m}m`);
-      }
-
-      // 2. EXTRACT FILAMENTS FROM TABLE
-      const fillets = [];
-      const lines = text.split('\n');
-
-      for (let line of lines) {
-        line = line.trim();
-        // Match ID at start (1, 2, 3...)
-        const idMatch = line.match(/^(\d+)\s+/);
-        if (idMatch) {
-          const id = parseInt(idMatch[1]);
-          if (id > 20) continue; // Ignore lines like "32 layers"
-
-          // Find all weights in this line
-          const weights = [...line.matchAll(/(\d+[.,]\d+)\s*g/gi)];
-          if (weights.length > 0) {
-            // The LAST weight is the Total for this filament in the summary table
-            const lastWeightStr = weights[weights.length - 1][1].replace(',', '.');
-            const weight = parseFloat(lastWeightStr);
-
-            if (weight > 0) {
-              fillets.push({ id, weight, nome: `Filamento ${id}` });
+        const h = parseInt(timeMatch[1]) || 0;
+        const m = parseInt(timeMatch[2]) || 0;
+        totalMins = (h * 60) + m;
+        timeFound = true;
+      } else {
+        // Try loose pattern just looking for H and M near each other: "5h 30m"
+        const looseMatch = text.match(/(\d+)\s*h\s*(\d+)\s*m/i);
+        if (looseMatch) {
+          const h = parseInt(looseMatch[1]) || 0;
+          const m = parseInt(looseMatch[2]) || 0;
+          totalMins = (h * 60) + m;
+          timeFound = true;
+        } else {
+          // Try complex including Days
+          const complexMatch = text.match(/(?:(\d+)d\s*)?(?:(\d+)h\s*)?(\d+)m/i);
+          if (complexMatch) {
+            const d = complexMatch[1] ? parseInt(complexMatch[1]) : 0;
+            const h = complexMatch[2] ? parseInt(complexMatch[2]) : 0;
+            const m = complexMatch[3] ? parseInt(complexMatch[3]) : 0;
+            if (d > 0 || h > 0 || m > 0) {
+              totalMins = (d * 24 * 60) + (h * 60) + m;
+              timeFound = true;
             }
           }
         }
       }
 
-      let grandTotal = 0;
+      if (timeFound && totalMins > 0) {
+        updates.tempoImpressao = totalMins;
+        const h = Math.floor(totalMins / 60);
+        const m = totalMins % 60;
+        log.push(`Tempo: ${h}h${m}m (${totalMins} min)`);
+      } else {
+        log.push("Aviso: Tempo de impressão não detectado.");
+      }
 
+      // 2. EXTRACT FILAMENTS / WEIGHTS
+      const inputs = [];
+      const rawWeights = [];
+
+      // Split by common delimiters to handle tabular data better
+      const tokens = text.split(/[\n\t|]/);
+
+      tokens.forEach(token => {
+        const t = token.trim();
+        // Regex allows: "12.5g", "12,5g", "12g", "12m" (meters often confused, but we look for g)
+        // Also support "12.5 g" with space
+        const matches = t.matchAll(/(\d+[.,]?\d*)\s*(k?g)/gi);
+        for (const m of matches) {
+          let val = parseFloat(m[1].replace(',', '.'));
+          if (m[2].toLowerCase() === 'kg') val *= 1000;
+          if (!isNaN(val) && val > 0 && val < 50000) rawWeights.push(val); // sanity check < 50kg
+        }
+      });
+
+      console.log("Raw Weights Found:", rawWeights);
+
+      if (rawWeights.length === 0) {
+        log.push("Erro: Nenhum peso (g) encontrado no texto.");
+      }
+
+      // -- STEP 2: GLOBAL SCALING NORMALIZATION --
+      // Check if weights effectively make sense for the print time.
+      const maxRaw = Math.max(...rawWeights, 0);
+      let scalingFactor = 1;
+
+      if (updates.tempoImpressao && updates.tempoImpressao > 0 && maxRaw > 0) {
+        // Assume MaxRaw is the Total Weight. Check Flow Rate.
+        const gPerMin = maxRaw / updates.tempoImpressao;
+        if (gPerMin > 5.0) scalingFactor = 100; // >300g/hour is unlikely for standard printers
+        else if (gPerMin > 50.0) scalingFactor = 1000;
+
+        if (scalingFactor > 1) log.push(`Ajuste de Escala: dividindo pesos por ${scalingFactor} (detectado erro de unidade)`);
+      }
+
+      let cleanWeights = rawWeights.map(w => parseFloat((w / scalingFactor).toFixed(2))).sort((a, b) => b - a);
+
+      // Filter out tiny noise (e.g. "0 g" or "0.01 g")
+      cleanWeights = cleanWeights.filter(w => w > 0.1);
+
+      // -- STEP 3: FIND GRAND TOTAL & COMPONENTS --
+      const grandTotal = cleanWeights[0] || 0; // Largest value is assumed to be Total
+
+      // If we only have 1 weight, that's just the total
+      let finalWeights = [];
+      const candidates = cleanWeights.slice(1); // Determine sub-components
+
+      if (candidates.length === 0 && grandTotal > 0) {
+        finalWeights = [grandTotal];
+      } else {
+        // SUBSET SUM STRATEGY
+        // Try to find which numbers sum up to GrandTotal
+        let currentSum = 0;
+        let subset = [];
+        const tolerance = 2.0; // 2g tolerance
+
+        for (const w of candidates) {
+          // Greedy approach: take largest that fits
+          if (currentSum + w <= grandTotal + tolerance) {
+            subset.push(w);
+            currentSum += w;
+          }
+        }
+
+        // If the sum is close enough, use it
+        if (Math.abs(grandTotal - currentSum) <= tolerance && subset.length > 0) {
+          console.log("Subset Sum Success! Found components:", subset);
+          finalWeights = subset;
+          log.push("Estrutura detectada: " + subset.length + " filamentos somando " + currentSum.toFixed(1) + "g");
+        } else {
+          console.warn("Subset Sum missed. Fallback Mode.");
+
+          // Fallback: If we can't find a sum, maybe the "Grand Total" wasn't actually a total but just another part?
+          // Or maybe OCR missed some numbers.
+          // Let's look for "ID" signals (1., 2.)
+          let likelyCount = 0;
+          // Use original lines for this check
+          text.split('\n').forEach(l => {
+            if (l.match(/^\s*\d+[\s.]+/)) likelyCount++;
+          });
+          if (likelyCount < 1) likelyCount = 1;
+
+          // Just take top N weights? 
+          // Better: Just return the GrandTotal as one piece if we can't decompose it.
+          // Or if we have obvious multiple large numbers, return them?
+
+          if (candidates.length >= 1) {
+            // Return the Grand Total + note
+            finalWeights = [grandTotal];
+            log.push("Aviso: Soma dos componentes não bate. Usando peso total apenas.");
+          } else {
+            finalWeights = [grandTotal];
+          }
+        }
+      }
+
+
+
+
+      updates.totalWeight = grandTotal;
+
+      // Map to Fillets object for existing logic compatibility
+      fillets.push(...finalWeights.map((w, i) => ({
+        id: i + 1,
+        weight: w,
+        nome: `Filamento ${i + 1} (Auto)`
+      })));
+
+      // UPDATE FORM
       if (fillets.length > 0) {
-        log.push(`Tabela detectada! ${fillets.length} filamentos encontrados.`);
-        grandTotal = fillets.reduce((a, b) => a + b.weight, 0);
-        grandTotal = parseFloat(grandTotal.toFixed(2));
-
         const newPartes = fillets.map((f, i) => ({
           id: Date.now() + i,
           nome: f.nome,
           materialId: "",
           peso: f.weight,
-          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.weight / grandTotal)) : 0,
+          tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao / fillets.length) : 0,
           foto: ""
         }));
 
+        // Sync composition
         const newComp = newPartes.map(p => ({
           materialId: "", peso: p.peso, tipo: "", cor: ""
         }));
 
         updates.partes = newPartes;
         updates.composicao = newComp;
-        updates.totalWeight = grandTotal;
+        log.push(`Detectados ${fillets.length} filamentos: ${fillets.map(f => f.weight + 'g').join(', ')}`);
 
+      } else if (updates.totalWeight > 0) {
+        // Just update the first part or create one
+        const currentPart = (form.partes && form.partes[0]) || { id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0 };
+        const newPart = { ...currentPart, peso: updates.totalWeight, tempo: updates.tempoImpressao || currentPart.tempo };
+
+        updates.partes = [newPart];
+        updates.composicao = [{ materialId: newPart.materialId, peso: updates.totalWeight, tipo: "", cor: "" }];
+        log.push(`Peso Total detectado: ${updates.totalWeight}g`);
       } else {
-        // Fallback if table parsing fails
-        log.push("Nenhum filamento detectado no modo tabela. Tentando pegar Total...");
-        // Try to find "Total ... X g" line
-        const totalLineMatch = text.match(/Total.*?(\d+[.,]\d+)\s*g/i);
-        if (totalLineMatch) {
-          grandTotal = parseFloat(totalLineMatch[1].replace(',', '.'));
-          log.push(`Total encontrado: ${grandTotal}g`);
-
-          const newPart = {
-            id: Date.now(), nome: "Peça Principal", materialId: "",
-            peso: grandTotal, tempo: updates.tempoImpressao || 0, foto: ""
-          };
-          updates.partes = [newPart];
-          updates.composicao = [{ materialId: "", peso: grandTotal, tipo: "", cor: "" }];
-          updates.totalWeight = grandTotal;
-        } else {
-          // Absolute fallback - just try to find biggest number
-          const allWeights = text.match(/(\d+[.,]\d+)\s*g/g);
-          if (allWeights) {
-            const ws = allWeights.map(w => parseFloat(w.replace('g', '').replace(',', '.').trim()));
-            const maxW = Math.max(...ws);
-            if (maxW > 0) {
-              grandTotal = maxW;
-              const newPart = { id: Date.now(), nome: "Peça (Estimada)", peso: grandTotal, tempo: updates.tempoImpressao || 0 };
-              updates.partes = [newPart];
-              updates.composicao = [{ peso: grandTotal }];
-              updates.totalWeight = grandTotal;
-              log.push(`Peso Estimado: ${grandTotal}g`);
-            }
-          }
-        }
+        log.push("Aviso: Nenhum peso válido encontrado.");
       }
 
       setForm(prev => ({ ...prev, ...updates }));
-      alert("Processamento concluído!\n\n" + log.join('\n'));
+      alert("Processamento concluído (Modo Local)!\n\n" + log.join('\n'));
 
     } catch (error) {
       console.error(error);
@@ -1993,10 +2121,26 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
     // Fallback: Try match by Type + Color (Legacy Data Support)
     if (!m && item.tipo) {
-      m = materials.find(x =>
-        (x.tipo || "").toLowerCase() === (item.tipo || "").toLowerCase() &&
-        (x.cor || "").toLowerCase() === (item.cor || "").toLowerCase()
-      );
+      const targetTipo = (item.tipo || "").trim().toLowerCase();
+      const targetCor = (item.cor || "").trim().toLowerCase();
+
+      m = materials.find(x => {
+        const matTipo = (x.tipo || "").trim().toLowerCase();
+        const matCor = (x.cor || "").trim().toLowerCase();
+        return matTipo === targetTipo && matCor === targetCor;
+      });
+
+      // Secondary Fallback: Try match just by Type if Color is missing/empty
+      if (!m && !targetCor) {
+        m = materials.find(x => (x.tipo || "").trim().toLowerCase() === targetTipo);
+      }
+    }
+
+    if (!m) {
+      console.warn("Material mismatch for item:", item);
+    } else {
+      // Debug Log
+      // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
     }
 
     const pricePerGram = m ? (m.custoKg / 1000) : 0;
