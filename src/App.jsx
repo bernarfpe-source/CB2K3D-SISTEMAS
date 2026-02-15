@@ -1819,24 +1819,28 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         const avgBrightness = totalBrightness / (data.length / 4);
         const isDark = avgBrightness < 128; // Standard cutoff
 
-        // 2. Process Pixels (Grayscale + Invert if Dark + High Contrast)
+        // 3. Process pixels (Grayscale + Invert if needed)
+        // Tesseract works best with Black text on White background.
+        // If original was Dark Mode (avg < 128), we INVERT so background becomes Light.
         for (let i = 0; i < data.length; i += 4) {
-          let r = data[i], g = data[i + 1], b = data[i + 2];
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
 
-          // Grayscale
+          // Simple luminance
           let gray = 0.299 * r + 0.587 * g + 0.114 * b;
 
-          // Invert if dark mode detected (make text black, bg white)
-          if (isDark) gray = 255 - gray;
+          if (isDark) {
+            gray = 255 - gray; // Invert to make it dark text on light bg
+          }
 
-          // High Contrast Threshold (Binarization)
-          // Make it crisp for Tesseract
-          const threshold = 180;
-          gray = (gray > threshold) ? 255 : 0;
+          // AUTO-CONTRAST / DYNAMIC RANGE STRETCH could go here, 
+          // but removing the hard threshold (180) is safer for colored text.
+          // Let Tesseract handle binarization.
 
-          data[i] = gray;     // R
-          data[i + 1] = gray;   // G
-          data[i + 2] = gray;   // B
+          data[i] = gray;
+          data[i + 1] = gray;
+          data[i + 2] = gray;
         }
 
         ctx.putImageData(imageData, 0, 0);
