@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.1 (Gemini 2.0 Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.2 (Chave Resetada)
       </p>
     </div>
   );
@@ -1695,7 +1695,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
   const pasteTargetRef = useRef("main");
   // STATE: API Keys
-  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("print3d_gemini_key") || "AIzaSyBA_cC2aC3BP0KIXT6cAuNq7YxTWJSw9jc");
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("print3d_gemini_key") || "");
   const [extracting, setExtracting] = useState(false);
 
   const saveGeminiKey = (key) => {
@@ -1706,10 +1706,10 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   // SAFETY: Clear old leaked key if present in localStorage
   useEffect(() => {
     const stored = localStorage.getItem("print3d_gemini_key");
-    if (stored && stored.includes("AIzaSyB6rMwt")) {
-      console.log("Cleaning up old leaked key...");
+    if (stored && (stored.includes("AIzaSyB6rMwt") || stored.includes("AIzaSyBA"))) { // Check both revoked keys
+      console.log("Cleaning up denied/leaked key...");
       localStorage.removeItem("print3d_gemini_key");
-      setGeminiKey("AIzaSyBA_cC2aC3BP0KIXT6cAuNq7YxTWJSw9jc"); // Set to new default
+      setGeminiKey(""); // Reset to empty
     }
   }, []);
 
