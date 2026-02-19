@@ -1988,7 +1988,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       if (timeFound && totalMins > 0) {
         updates.tempoImpressao = totalMins;
         const h = Math.floor(totalMins / 60);
-        log.push(`Tempo: ${h}h${m}m (${totalMins} min)`);
+        const minsRemaining = totalMins % 60;
+        log.push(`Tempo: ${h}h${minsRemaining}m (${totalMins} min)`);
       } else {
         // Fallback: try capturing just "3h13m" logic
         // Look for "Total:" followed by time
