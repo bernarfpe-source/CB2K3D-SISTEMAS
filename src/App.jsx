@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v2.3 • Secure Session
+          v3.0 • Gemini 1.5 Fixed
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v1.0.6 (Gemini 1.5 Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.0 (Gemini 1.5 Fix)
       </p>
     </div>
   );
@@ -2274,557 +2274,556 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       setExtracting(false);
     }
   };
-};
 
-// Removed activeTab state
+  // Removed activeTab state
 
-// Helper to update form
-const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  // Helper to update form
+  const update = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
-// Cost Calculation Effect
-// --- COST CALCULATIONS (Real-time) ---
-const cfg = {
-  energia: { custoKwh: 0.95, consumoMedioFDM: 150, ...(config?.energia || {}) },
-  trabalho: { horaTecnica: 35.00, ...(config?.trabalho || {}) },
-  depreciacao: { vidaUtilHoras: 2000, manutencaoPercent: 10, ...(config?.depreciacao || {}) },
-  logistica: { custoFretePadrao: 20.00, custoEmbalagemPadrao: 2.50, ...(config?.logistica || {}) }
-};
+  // Cost Calculation Effect
+  // --- COST CALCULATIONS (Real-time) ---
+  const cfg = {
+    energia: { custoKwh: 0.95, consumoMedioFDM: 150, ...(config?.energia || {}) },
+    trabalho: { horaTecnica: 35.00, ...(config?.trabalho || {}) },
+    depreciacao: { vidaUtilHoras: 2000, manutencaoPercent: 10, ...(config?.depreciacao || {}) },
+    logistica: { custoFretePadrao: 20.00, custoEmbalagemPadrao: 2.50, ...(config?.logistica || {}) }
+  };
 
-const tempoHoras = (form.tempoImpressao || 0) / 60;
+  const tempoHoras = (form.tempoImpressao || 0) / 60;
 
-const custoMaoDeObra = parseFloat((tempoHoras * cfg.trabalho.horaTecnica).toFixed(2));
-const custoDepreciacao = parseFloat(((3500 / cfg.depreciacao.vidaUtilHoras) * tempoHoras).toFixed(2));
-const custoManutencao = parseFloat((custoDepreciacao * (cfg.depreciacao.manutencaoPercent / 100)).toFixed(2));
-const fixedCost = custoMaoDeObra + custoDepreciacao + custoManutencao;
+  const custoMaoDeObra = parseFloat((tempoHoras * cfg.trabalho.horaTecnica).toFixed(2));
+  const custoDepreciacao = parseFloat(((3500 / cfg.depreciacao.vidaUtilHoras) * tempoHoras).toFixed(2));
+  const custoManutencao = parseFloat((custoDepreciacao * (cfg.depreciacao.manutencaoPercent / 100)).toFixed(2));
+  const fixedCost = custoMaoDeObra + custoDepreciacao + custoManutencao;
 
-const custoMaterial = parseFloat((form.composicao || []).reduce((acc, item) => {
-  let m = materials.find(x => String(x.id) === String(item.materialId));
+  const custoMaterial = parseFloat((form.composicao || []).reduce((acc, item) => {
+    let m = materials.find(x => String(x.id) === String(item.materialId));
 
-  // Fallback: Try match by Type + Color (Legacy Data Support)
-  if (!m && item.tipo) {
-    const targetTipo = (item.tipo || "").trim().toLowerCase();
-    const targetCor = (item.cor || "").trim().toLowerCase();
+    // Fallback: Try match by Type + Color (Legacy Data Support)
+    if (!m && item.tipo) {
+      const targetTipo = (item.tipo || "").trim().toLowerCase();
+      const targetCor = (item.cor || "").trim().toLowerCase();
 
-    m = materials.find(x => {
-      const matTipo = (x.tipo || "").trim().toLowerCase();
-      const matCor = (x.cor || "").trim().toLowerCase();
-      return matTipo === targetTipo && matCor === targetCor;
-    });
+      m = materials.find(x => {
+        const matTipo = (x.tipo || "").trim().toLowerCase();
+        const matCor = (x.cor || "").trim().toLowerCase();
+        return matTipo === targetTipo && matCor === targetCor;
+      });
 
-    // Secondary Fallback: Try match just by Type if Color is missing/empty
-    if (!m && !targetCor) {
-      m = materials.find(x => (x.tipo || "").trim().toLowerCase() === targetTipo);
-    }
-  }
-
-  if (!m) {
-    console.warn("Material mismatch for item:", item);
-  } else {
-    // Debug Log
-    // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
-  }
-
-  const pricePerGram = m ? (m.custoKg / 1000) : 0;
-  return acc + ((item.peso || 0) * pricePerGram);
-}, 0).toFixed(2));
-
-const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
-
-// Calculate Base based on ACTIVE costs
-const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
-const calculatedBase = parseFloat((
-  (active.maoDeObra ? custoMaoDeObra : 0) +
-  (active.depreciacao ? custoDepreciacao : 0) +
-  (active.manutencao ? custoManutencao : 0) +
-  (active.material ? custoMaterial : 0) +
-  (active.energia ? custoEnergia : 0)
-).toFixed(2));
-
-const totalCost = calculatedBase +
-  ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
-  ((active.frete !== false) ? (form.custoFrete || 0) : 0);
-
-// Auto-update form state if calculations diverge (to save correct values)
-useEffect(() => {
-  const feePercent = (
-    ((active.taxaMarketplace !== false) ? (form.taxaMarketplace || 0) : 0) +
-    ((active.impostos !== false) ? (form.impostos || 0) : 0)
-  ) / 100;
-  const profitPercent = (form.lucroDesejado || 0) / 100;
-
-  let suggestedPrice = 0;
-  if (feePercent < 1) {
-    suggestedPrice = (totalCost * (1 + profitPercent)) / (1 - feePercent);
-  } else {
-    suggestedPrice = totalCost * (1 + profitPercent + feePercent);
-  }
-
-  // Only update if changed > 0.01 to avoid loops
-  if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
-    setForm(prev => ({
-      ...prev,
-      custoBase: calculatedBase,
-      preco: parseFloat(suggestedPrice.toFixed(2))
-    }));
-  }
-}, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
-
-// ENABLE PASTE (Ctrl+V) for Images
-// ENABLE PASTE (Ctrl+V) for Images
-useEffect(() => {
-  const handlePaste = (e) => {
-    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf("image") !== -1) {
-        const blob = items[i].getAsFile();
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const result = event.target.result;
-          if (pasteTargetRef.current === "tech") {
-            setForm(prev => ({ ...prev, fotosTecnicas: [...(prev.fotosTecnicas || []), result] }));
-            showToast("Print técnico adicionado!", "success");
-          } else {
-            setForm(prev => {
-              const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), result];
-              return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
-            });
-            showToast("Imagem adicionada à galeria!", "success");
-          }
-        };
-        reader.readAsDataURL(blob);
+      // Secondary Fallback: Try match just by Type if Color is missing/empty
+      if (!m && !targetCor) {
+        m = materials.find(x => (x.tipo || "").trim().toLowerCase() === targetTipo);
       }
     }
-  };
-  window.addEventListener("paste", handlePaste);
-  return () => window.removeEventListener("paste", handlePaste);
-}, []);
 
-return (
-  <Modal title={product ? "Editar Produto (Atualizado)" : "Novo Produto (Atualizado)"} onClose={onClose} width={900}>
-    <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
+    if (!m) {
+      console.warn("Material mismatch for item:", item);
+    } else {
+      // Debug Log
+      // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
+    }
 
-      {/* SECTION 1: INFO (Original) */}
-      <div style={{ marginBottom: 32 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>INFORMAÇÕES BÁSICAS</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Nome do Produto</label>
-            <input value={form.nome} onChange={e => update("nome", e.target.value)} style={inputStyle} placeholder="Ex: Vaso Geométrico" />
-          </div>
+    const pricePerGram = m ? (m.custoKg / 1000) : 0;
+    return acc + ((item.peso || 0) * pricePerGram);
+  }, 0).toFixed(2));
 
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Categoria</label>
-            <select value={form.categoria} onChange={e => update("categoria", e.target.value)} style={inputStyle}>
-              {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Chaveiros", "Pets", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Estoque Pronta Entrega</label>
-            <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
-          </div>
+  const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
 
-          {/* IMAGE/VIDEO UPLOAD */}
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos e Vídeos do Produto</label>
+  // Calculate Base based on ACTIVE costs
+  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
+  const calculatedBase = parseFloat((
+    (active.maoDeObra ? custoMaoDeObra : 0) +
+    (active.depreciacao ? custoDepreciacao : 0) +
+    (active.manutencao ? custoManutencao : 0) +
+    (active.material ? custoMaterial : 0) +
+    (active.energia ? custoEnergia : 0)
+  ).toFixed(2));
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-              {/* Gallery */}
-              {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => {
-                const isVideo = typeof url === "string" && (url.startsWith("data:video") || url.endsWith(".mp4") || url.endsWith(".webm") || url.endsWith(".mov"));
-                return (
-                  <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#000" }}>
-                    {isVideo ? (
-                      <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
-                    ) : (
-                      <img src={url} alt={`Mídia ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    )}
+  const totalCost = calculatedBase +
+    ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
+    ((active.frete !== false) ? (form.custoFrete || 0) : 0);
 
-                    <button
-                      onClick={() => {
-                        const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
-                        setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
-                      }}
-                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12, zIndex: 10 }}
-                    >✕</button>
-                    {/* Video Indicator */}
-                    {isVideo && <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>🎥 Vídeo</div>}
-                  </div>
-                );
-              })}
+  // Auto-update form state if calculations diverge (to save correct values)
+  useEffect(() => {
+    const feePercent = (
+      ((active.taxaMarketplace !== false) ? (form.taxaMarketplace || 0) : 0) +
+      ((active.impostos !== false) ? (form.impostos || 0) : 0)
+    ) / 100;
+    const profitPercent = (form.lucroDesejado || 0) / 100;
 
-              {/* Add Button */}
-              <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
-                <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
-                <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime"
-                  onChange={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                      // Limit video size (5MB)
-                      if (file.type.startsWith("video/") && file.size > 5 * 1024 * 1024) {
-                        alert("Vídeo muito grande! Máximo 5MB.");
-                        return;
+    let suggestedPrice = 0;
+    if (feePercent < 1) {
+      suggestedPrice = (totalCost * (1 + profitPercent)) / (1 - feePercent);
+    } else {
+      suggestedPrice = totalCost * (1 + profitPercent + feePercent);
+    }
+
+    // Only update if changed > 0.01 to avoid loops
+    if (Math.abs(calculatedBase - (form.custoBase || 0)) > 0.01 || Math.abs(suggestedPrice - (form.preco || 0)) > 0.01) {
+      setForm(prev => ({
+        ...prev,
+        custoBase: calculatedBase,
+        preco: parseFloat(suggestedPrice.toFixed(2))
+      }));
+    }
+  }, [calculatedBase, totalCost, form.taxaMarketplace, form.impostos, form.lucroDesejado, form.custoBase, form.preco, form.activeCosts]);
+
+  // ENABLE PASTE (Ctrl+V) for Images
+  // ENABLE PASTE (Ctrl+V) for Images
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf("image") !== -1) {
+          const blob = items[i].getAsFile();
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const result = event.target.result;
+            if (pasteTargetRef.current === "tech") {
+              setForm(prev => ({ ...prev, fotosTecnicas: [...(prev.fotosTecnicas || []), result] }));
+              showToast("Print técnico adicionado!", "success");
+            } else {
+              setForm(prev => {
+                const newFotos = [...(prev.fotos || (prev.imagemUrl ? [prev.imagemUrl] : [])), result];
+                return { ...prev, fotos: newFotos, imagemUrl: newFotos[0] };
+              });
+              showToast("Imagem adicionada à galeria!", "success");
+            }
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, []);
+
+  return (
+    <Modal title={product ? "Editar Produto (Atualizado)" : "Novo Produto (Atualizado)"} onClose={onClose} width={900}>
+      <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: 8 }}>
+
+        {/* SECTION 1: INFO (Original) */}
+        <div style={{ marginBottom: 32 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>INFORMAÇÕES BÁSICAS</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Nome do Produto</label>
+              <input value={form.nome} onChange={e => update("nome", e.target.value)} style={inputStyle} placeholder="Ex: Vaso Geométrico" />
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Categoria</label>
+              <select value={form.categoria} onChange={e => update("categoria", e.target.value)} style={inputStyle}>
+                {["Decoração", "Utilidades", "Miniaturas", "Peças Técnicas", "Chaveiros", "Pets", "Personalizado", "Outros"].map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Estoque Pronta Entrega</label>
+              <input type="number" min="0" value={form.estoqueAtual || 0} onChange={e => update("estoqueAtual", parseInt(e.target.value) || 0)} style={inputStyle} />
+            </div>
+
+            {/* IMAGE/VIDEO UPLOAD */}
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Fotos e Vídeos do Produto</label>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {/* Gallery */}
+                {(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).map((url, idx) => {
+                  const isVideo = typeof url === "string" && (url.startsWith("data:video") || url.endsWith(".mp4") || url.endsWith(".webm") || url.endsWith(".mov"));
+                  return (
+                    <div key={idx} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#000" }}>
+                      {isVideo ? (
+                        <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                      ) : (
+                        <img src={url} alt={`Mídia ${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      )}
+
+                      <button
+                        onClick={() => {
+                          const newFotos = (form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])).filter((_, i) => i !== idx);
+                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] || "" }));
+                        }}
+                        style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12, zIndex: 10 }}
+                      >✕</button>
+                      {/* Video Indicator */}
+                      {isVideo && <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>🎥 Vídeo</div>}
+                    </div>
+                  );
+                })}
+
+                {/* Add Button */}
+                <div style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #E5E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#F9F9F9" }}>
+                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                  <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        // Limit video size (5MB)
+                        if (file.type.startsWith("video/") && file.size > 5 * 1024 * 1024) {
+                          alert("Vídeo muito grande! Máximo 5MB.");
+                          return;
+                        }
+
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
+                          setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                        };
+                        reader.readAsDataURL(file);
                       }
+                    }}
+                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                  />
+                </div>
+              </div>
 
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), reader.result];
-                        setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
-                      };
-                      reader.readAsDataURL(file);
+              {/* URL Input */}
+              <div style={{ marginTop: 8 }}>
+                <input
+                  placeholder="Ou adicione via URL e pressione Enter..."
+                  style={{ ...inputStyle, fontSize: 12 }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.target.value) {
+                      const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), e.target.value];
+                      setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
+                      e.target.value = "";
+                      e.preventDefault();
                     }
                   }}
-                  style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
                 />
               </div>
             </div>
 
-            {/* URL Input */}
-            <div style={{ marginTop: 8 }}>
-              <input
-                placeholder="Ou adicione via URL e pressione Enter..."
-                style={{ ...inputStyle, fontSize: 12 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.target.value) {
-                    const newFotos = [...(form.fotos || (form.imagemUrl ? [form.imagemUrl] : [])), e.target.value];
-                    setForm(prev => ({ ...prev, fotos: newFotos, imagemUrl: newFotos[0] }));
-                    e.target.value = "";
-                    e.preventDefault();
-                  }
-                }}
-              />
+            {/* TECHNICAL SPECS IMAGES */}
+            <div
+              onMouseEnter={() => pasteTargetRef.current = "tech"}
+              onMouseLeave={() => pasteTargetRef.current = "main"}
+              style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6", transition: "border-color 0.2s" }}
+            >
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                📄 Documentação Técnica / Prints do Fatiador
+              </label>
+              <p style={{ fontSize: 11, color: "#8E8E93", marginBottom: 12 }}>
+                Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
+                <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
+              </p>
+
+              {/* GEMINI KEY CONFIG - RE-ADDED */}
+              <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: 8, borderRadius: 6, border: "1px solid #E5E5EA" }}>
+                <span style={{ fontSize: 16 }}>✨</span>
+                <input
+                  type="password"
+                  placeholder="Cole sua API Key do Google Gemini aqui para IA Avançada..."
+                  value={geminiKey}
+                  onChange={(e) => saveGeminiKey(e.target.value)}
+                  style={{ ...inputStyle, fontSize: 11, height: 28, borderColor: geminiKey ? "#34C759" : "#E5E5EA", flex: 1, margin: 0 }}
+                />
+                <button
+                  onClick={(e) => { e.preventDefault(); window.open("https://aistudio.google.com/app/apikey", "_blank"); }}
+                  style={{ ...btnSecondary, fontSize: 10, padding: "0 8px", height: 28, whiteSpace: "nowrap" }}
+                  title="Obter chave gratuita no Google AI Studio"
+                >
+                  Criar Chave Grátis ↗
+                </button>
+              </div>
+
+
+
+              {/* OCR BUTTON - ALWAYS VISIBLE */}
+              <div style={{ marginBottom: 12 }}>
+                <button
+                  onClick={(e) => { e.preventDefault(); handleExtractData(); }}
+                  disabled={extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0}
+                  style={{
+                    padding: "8px 12px",
+                    background: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#E5E5EA" : "#5856D6",
+                    color: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#8E8E93" : "#fff",
+                    border: "none", borderRadius: 8,
+                    fontSize: 12, fontWeight: 600,
+                    cursor: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "default" : "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                    width: "100%", justifyContent: "center"
+                  }}
+                >
+                  {extracting ? "Processando..." : (!form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "⚡ Adicione um print para extrair dados" : "⚡ Extrair Dados do Print (Beta)"}
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {/* Tech Gallery */}
+                {(form.fotosTecnicas || []).map((url, idx) => (
+                  <div key={idx} style={{ position: "relative", width: 100, height: 100, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#fff", cursor: "pointer" }} onClick={() => window.open(url, "_blank")}>
+                    <img src={url} alt={`Doc ${idx}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const newFotos = (form.fotosTecnicas || []).filter((_, i) => i !== idx);
+                        setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                      }}
+                      style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
+                    >✕</button>
+                  </div>
+                ))}
+
+                {/* Add Button */}
+                <div style={{ width: 100, height: 100, borderRadius: 8, border: "2px dashed #C7C7CC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#fff" }}>
+                  <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
+                  <input type="file" accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const newFotos = [...(form.fotosTecnicas || []), reader.result];
+                          setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Descrição</label>
+              <textarea value={form.descricao} onChange={e => update("descricao", e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
             </div>
           </div>
+        </div>
 
-          {/* TECHNICAL SPECS IMAGES */}
-          <div
-            onMouseEnter={() => pasteTargetRef.current = "tech"}
-            onMouseLeave={() => pasteTargetRef.current = "main"}
-            style={{ gridColumn: "1 / -1", marginTop: 16, padding: 16, background: "#F2F2F7", borderRadius: 12, border: "1px dashed #D1D1D6", transition: "border-color 0.2s" }}
-          >
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1C1C1E", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              📄 Documentação Técnica / Prints do Fatiador
-            </label>
-            <p style={{ fontSize: 11, color: "#8E8E93", marginBottom: 12 }}>
-              Adicione aqui prints do fatiamento (tempo, gramas), esquemas de montagem ou anotações técnicas.
-              <br />Estas imagens <strong>não aparecem</strong> na galeria principal do produto.
-            </p>
+        {/* SECTION 2: PRODUCTION (Assembly) */}
+        <div style={{ marginBottom: 32 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>ESTRUTURA DE PRODUÇÃO (COMPONENTES)</h3>
 
-            {/* GEMINI KEY CONFIG - RE-ADDED */}
-            <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", background: "#fff", padding: 8, borderRadius: 6, border: "1px solid #E5E5EA" }}>
-              <span style={{ fontSize: 16 }}>✨</span>
-              <input
-                type="password"
-                placeholder="Cole sua API Key do Google Gemini aqui para IA Avançada..."
-                value={geminiKey}
-                onChange={(e) => saveGeminiKey(e.target.value)}
-                style={{ ...inputStyle, fontSize: 11, height: 28, borderColor: geminiKey ? "#34C759" : "#E5E5EA", flex: 1, margin: 0 }}
-              />
-              <button
-                onClick={(e) => { e.preventDefault(); window.open("https://aistudio.google.com/app/apikey", "_blank"); }}
-                style={{ ...btnSecondary, fontSize: 10, padding: "0 8px", height: 28, whiteSpace: "nowrap" }}
-                title="Obter chave gratuita no Google AI Studio"
-              >
-                Criar Chave Grátis ↗
-              </button>
+          <div style={{ background: "#F9F9F9", borderRadius: 12, padding: 16, border: "1px solid #E5E5EA" }}>
+            <div style={{ marginBottom: 16 }}>
+              {(form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }])).map((part, idx, arr) => (
+                <div key={idx} style={{ background: "#fff", border: "1px solid #E5E5EA", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  {/* Part Photo */}
+                  <div style={{ width: 60, height: 60, background: "#F2F2F7", borderRadius: 6, position: "relative", flexShrink: 0, overflow: "hidden", border: "1px dashed #C7C7CC" }}>
+                    {part.foto ? <img src={part.foto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 20, color: "#C7C7CC" }}>📷</div>}
+                    <input type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} onChange={(e) => {
+                      if (e.target.files[0]) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const newParts = [...arr];
+                          newParts[idx] = { ...part, foto: reader.result };
+                          // Update Logic Inline
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        };
+                        reader.readAsDataURL(e.target.files[0]);
+                      }
+                    }} />
+                  </div>
+
+                  {/* Part Details */}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
+                      <input placeholder="Nome da Parte (ex: Base, Tampa)" value={part.nome} onChange={e => {
+                        const newParts = [...arr]; newParts[idx] = { ...part, nome: e.target.value };
+                        // Update Sync
+                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                        const newComposicao = newParts.map(p => {
+                          const m = materials.find(x => String(x.id) === String(p.materialId));
+                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                        });
+                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                      }} style={{ ...inputStyle, flex: 1, fontWeight: "600" }} />
+                      {arr.length > 1 && <button onClick={() => {
+                        const newParts = arr.filter((_, i) => i !== idx);
+                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                        const newComposicao = newParts.map(p => {
+                          const m = materials.find(x => String(x.id) === String(p.materialId));
+                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                        });
+                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                      }} style={{ ...btnSecondary, color: "#FF3B30", padding: "0 8px" }}>✕</button>}
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Material</label>
+                        <select value={part.materialId} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, materialId: e.target.value };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }}>
+                          <option value="">Selecione...</option>
+                          {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor})</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Peso (g)</label>
+                        <input type="number" min="0" value={part.peso} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, peso: parseFloat(e.target.value) || 0 };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          const newComposicao = newParts.map(p => {
+                            const m = materials.find(x => String(x.id) === String(p.materialId));
+                            return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+                          });
+                          setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: "#8E8E93" }}>Tempo (min)</label>
+                        <input type="number" min="0" value={part.tempo} onChange={e => {
+                          const newParts = [...arr]; newParts[idx] = { ...part, tempo: parseFloat(e.target.value) || 0 };
+                          const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+                          // Just update time (and sync composicao just in case, though not needed for time)
+                          setForm(prev => ({ ...prev, partes: newParts, tempoImpressao: totalTime }));
+                        }} style={{ ...inputStyle, padding: "4px" }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
 
+            <button onClick={() => {
+              const currentParts = form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }]);
+              const newParts = [...currentParts, { id: Date.now(), nome: `Parte ${currentParts.length + 1}`, materialId: "", peso: 0, tempo: 0, foto: "" }];
+              // Sync
+              const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
+              const newComposicao = newParts.map(p => {
+                const m = materials.find(x => String(x.id) === String(p.materialId));
+                return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
+              });
+              setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
+            }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", border: "1px dashed #007AFF", color: "#007AFF" }}>+ Adicionar Parte / Componente</button>
 
-
-            {/* OCR BUTTON - ALWAYS VISIBLE */}
-            <div style={{ marginBottom: 12 }}>
-              <button
-                onClick={(e) => { e.preventDefault(); handleExtractData(); }}
-                disabled={extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0}
-                style={{
-                  padding: "8px 12px",
-                  background: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#E5E5EA" : "#5856D6",
-                  color: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "#8E8E93" : "#fff",
-                  border: "none", borderRadius: 8,
-                  fontSize: 12, fontWeight: 600,
-                  cursor: (extracting || !form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "default" : "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  width: "100%", justifyContent: "center"
-                }}
-              >
-                {extracting ? "Processando..." : (!form.fotosTecnicas || form.fotosTecnicas.length === 0) ? "⚡ Adicione um print para extrair dados" : "⚡ Extrair Dados do Print (Beta)"}
-              </button>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666", padding: "0 4px" }}>
+              <span>Tempo Total: <strong>{form.tempoImpressao || 0} min</strong></span>
+              <span>Peso Total: <strong>{(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)} g</strong></span>
             </div>
+          </div>
+        </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-              {/* Tech Gallery */}
-              {(form.fotosTecnicas || []).map((url, idx) => (
-                <div key={idx} style={{ position: "relative", width: 100, height: 100, borderRadius: 8, overflow: "hidden", border: "1px solid #E5E5EA", background: "#fff", cursor: "pointer" }} onClick={() => window.open(url, "_blank")}>
-                  <img src={url} alt={`Doc ${idx}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const newFotos = (form.fotosTecnicas || []).filter((_, i) => i !== idx);
-                      setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
-                    }}
-                    style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 12 }}
-                  >✕</button>
+        {/* SECTION 3: PRICING */}
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
+
+              {[
+                { key: "material", label: "Material (Filamento)", val: custoMaterial },
+                { key: "energia", label: "Energia Elétrica", val: custoEnergia },
+                { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
+                { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
+                { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra }
+              ].map(item => (
+                <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
+                    <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
+                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
+                    }} />
+                    {item.label}
+                  </label>
+                  <span style={{ textDecoration: (form.activeCosts?.[item.key] !== false) ? "none" : "line-through" }}>R$ {item.val.toFixed(2)}</span>
                 </div>
               ))}
 
-              {/* Add Button */}
-              <div style={{ width: 100, height: 100, borderRadius: 8, border: "2px dashed #C7C7CC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", position: "relative", background: "#fff" }}>
-                <span style={{ fontSize: 24, color: "#C7C7CC" }}>+</span>
-                <input type="file" accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const newFotos = [...(form.fotosTecnicas || []), reader.result];
-                        setForm(prev => ({ ...prev, fotosTecnicas: newFotos }));
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                  style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-                />
-              </div>
-            </div>
-          </div>
+              <div style={{ height: 1, background: "#D1D1D6", margin: "10px 0" }} />
 
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#8E8E93", marginBottom: 6 }}>Descrição</label>
-            <textarea value={form.descricao} onChange={e => update("descricao", e.target.value)} style={{ ...inputStyle, height: 80, resize: "vertical" }} />
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 2: PRODUCTION (Assembly) */}
-      <div style={{ marginBottom: 32 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>ESTRUTURA DE PRODUÇÃO (COMPONENTES)</h3>
-
-        <div style={{ background: "#F9F9F9", borderRadius: 12, padding: 16, border: "1px solid #E5E5EA" }}>
-          <div style={{ marginBottom: 16 }}>
-            {(form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }])).map((part, idx, arr) => (
-              <div key={idx} style={{ background: "#fff", border: "1px solid #E5E5EA", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", gap: 12, alignItems: "flex-start" }}>
-                {/* Part Photo */}
-                <div style={{ width: 60, height: 60, background: "#F2F2F7", borderRadius: 6, position: "relative", flexShrink: 0, overflow: "hidden", border: "1px dashed #C7C7CC" }}>
-                  {part.foto ? <img src={part.foto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 20, color: "#C7C7CC" }}>📷</div>}
-                  <input type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} onChange={(e) => {
-                    if (e.target.files[0]) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const newParts = [...arr];
-                        newParts[idx] = { ...part, foto: reader.result };
-                        // Update Logic Inline
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        const newComposicao = newParts.map(p => {
-                          const m = materials.find(x => String(x.id) === String(p.materialId));
-                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                        });
-                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                      };
-                      reader.readAsDataURL(e.target.files[0]);
-                    }
-                  }} />
-                </div>
-
-                {/* Part Details */}
-                <div style={{ flex: 1 }}>
-                  <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
-                    <input placeholder="Nome da Parte (ex: Base, Tampa)" value={part.nome} onChange={e => {
-                      const newParts = [...arr]; newParts[idx] = { ...part, nome: e.target.value };
-                      // Update Sync
-                      const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                      const newComposicao = newParts.map(p => {
-                        const m = materials.find(x => String(x.id) === String(p.materialId));
-                        return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                      });
-                      setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                    }} style={{ ...inputStyle, flex: 1, fontWeight: "600" }} />
-                    {arr.length > 1 && <button onClick={() => {
-                      const newParts = arr.filter((_, i) => i !== idx);
-                      const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                      const newComposicao = newParts.map(p => {
-                        const m = materials.find(x => String(x.id) === String(p.materialId));
-                        return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                      });
-                      setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                    }} style={{ ...btnSecondary, color: "#FF3B30", padding: "0 8px" }}>✕</button>}
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", gap: 8 }}>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#8E8E93" }}>Material</label>
-                      <select value={part.materialId} onChange={e => {
-                        const newParts = [...arr]; newParts[idx] = { ...part, materialId: e.target.value };
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        const newComposicao = newParts.map(p => {
-                          const m = materials.find(x => String(x.id) === String(p.materialId));
-                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                        });
-                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                      }} style={{ ...inputStyle, padding: "4px" }}>
-                        <option value="">Selecione...</option>
-                        {materials.map(m => <option key={m.id} value={m.id}>{m.nome} ({m.cor})</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#8E8E93" }}>Peso (g)</label>
-                      <input type="number" min="0" value={part.peso} onChange={e => {
-                        const newParts = [...arr]; newParts[idx] = { ...part, peso: parseFloat(e.target.value) || 0 };
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        const newComposicao = newParts.map(p => {
-                          const m = materials.find(x => String(x.id) === String(p.materialId));
-                          return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-                        });
-                        setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-                      }} style={{ ...inputStyle, padding: "4px" }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#8E8E93" }}>Tempo (min)</label>
-                      <input type="number" min="0" value={part.tempo} onChange={e => {
-                        const newParts = [...arr]; newParts[idx] = { ...part, tempo: parseFloat(e.target.value) || 0 };
-                        const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-                        // Just update time (and sync composicao just in case, though not needed for time)
-                        setForm(prev => ({ ...prev, partes: newParts, tempoImpressao: totalTime }));
-                      }} style={{ ...inputStyle, padding: "4px" }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <button onClick={() => {
-            const currentParts = form.partes && form.partes.length > 0 ? form.partes : (form.composicao && form.composicao.length > 0 ? form.composicao.map((c, i) => ({ id: i, nome: `Parte ${i + 1}`, materialId: c.materialId, peso: c.peso, tempo: Math.round((form.tempoImpressao || 0) / form.composicao.length), foto: "" })) : [{ id: Date.now(), nome: "Parte Principal", materialId: "", peso: 0, tempo: 0, foto: "" }]);
-            const newParts = [...currentParts, { id: Date.now(), nome: `Parte ${currentParts.length + 1}`, materialId: "", peso: 0, tempo: 0, foto: "" }];
-            // Sync
-            const totalTime = newParts.reduce((a, b) => a + (parseFloat(b.tempo) || 0), 0);
-            const newComposicao = newParts.map(p => {
-              const m = materials.find(x => String(x.id) === String(p.materialId));
-              return { materialId: p.materialId, peso: parseFloat(p.peso) || 0, tipo: m?.tipo || "", cor: m?.cor || "" };
-            });
-            setForm(prev => ({ ...prev, partes: newParts, composicao: newComposicao, tempoImpressao: totalTime }));
-          }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", border: "1px dashed #007AFF", color: "#007AFF" }}>+ Adicionar Parte / Componente</button>
-
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", fontSize: 12, color: "#666", padding: "0 4px" }}>
-            <span>Tempo Total: <strong>{form.tempoImpressao || 0} min</strong></span>
-            <span>Peso Total: <strong>{(form.composicao || []).reduce((a, b) => a + (parseFloat(b.peso) || 0), 0)} g</strong></span>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: PRICING */}
-      <div>
-        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-          <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
-
-            {[
-              { key: "material", label: "Material (Filamento)", val: custoMaterial },
-              { key: "energia", label: "Energia Elétrica", val: custoEnergia },
-              { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
-              { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
-              { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra }
-            ].map(item => (
-              <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
-                  <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
-                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
-                  }} />
-                  {item.label}
-                </label>
-                <span style={{ textDecoration: (form.activeCosts?.[item.key] !== false) ? "none" : "line-through" }}>R$ {item.val.toFixed(2)}</span>
-              </div>
-            ))}
-
-            <div style={{ height: 1, background: "#D1D1D6", margin: "10px 0" }} />
-
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, fontWeight: 600, color: "#1C1C1E" }}>
-              <span>Custo Base (Produção)</span>
-              <span>R$ {calculatedBase.toFixed(2)}</span>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
-                  setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
-                }} />
-                Embalagem
-              </label>
-              <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.embalagem !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.embalagem !== false) ? "none" : "line-through" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
-                  setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
-                }} />
-                Frete / Logística
-              </label>
-              <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.frete !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.frete !== false) ? "none" : "line-through" }} />
-            </div>
-
-            <div style={{ borderTop: "1px solid #D1D1D6", margin: "12px 0", paddingTop: 12, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: "#000" }}>
-              <span>Custo Total Final</span>
-              <span>R$ {(totalCost).toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 20, padding: 16, background: "#fff", borderRadius: 8, border: "1px solid #E5E5EA" }}>
-              <h5 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 12px", color: "#8E8E93", letterSpacing: 0.5, textTransform: "uppercase" }}>TAXAS & VENDAS</h5>
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.impostos !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                  <input type="checkbox" checked={active.impostos !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), impostos: e.target.checked } }))} />
-                  Impostos
-                </label>
-                <div style={{ position: "relative", width: 80 }}>
-                  <input type="number" value={form.impostos || 0} onChange={e => update("impostos", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.impostos !== false) ? "#000" : "#C7C7CC", textDecoration: (active.impostos !== false) ? "none" : "line-through" }} />
-                  <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
-                </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, fontWeight: 600, color: "#1C1C1E" }}>
+                <span>Custo Base (Produção)</span>
+                <span>R$ {calculatedBase.toFixed(2)}</span>
               </div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.taxaMarketplace !== false) ? "#1C1C1E" : "#C7C7CC" }}>
-                  <input type="checkbox" checked={active.taxaMarketplace !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), taxaMarketplace: e.target.checked } }))} />
-                  Marketplace
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                  <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
+                  }} />
+                  Embalagem
                 </label>
-                <div style={{ position: "relative", width: 80 }}>
-                  <input type="number" value={form.taxaMarketplace || 0} onChange={e => update("taxaMarketplace", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.taxaMarketplace !== false) ? "#000" : "#C7C7CC", textDecoration: (active.taxaMarketplace !== false) ? "none" : "line-through" }} />
-                  <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
-                </div>
+                <input type="number" value={form.custoEmbalagem || 0} onChange={e => update("custoEmbalagem", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.embalagem !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.embalagem !== false) ? "none" : "line-through" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                  <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
+                  }} />
+                  Frete / Logística
+                </label>
+                <input type="number" value={form.custoFrete || 0} onChange={e => update("custoFrete", parseFloat(e.target.value))} style={{ ...inputStyle, width: 80, padding: "4px 8px", fontSize: 13, textAlign: "right", color: (form.activeCosts?.frete !== false) ? "#000" : "#C7C7CC", textDecoration: (form.activeCosts?.frete !== false) ? "none" : "line-through" }} />
+              </div>
+
+              <div style={{ borderTop: "1px solid #D1D1D6", margin: "12px 0", paddingTop: 12, display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: "#000" }}>
+                <span>Custo Total Final</span>
+                <span>R$ {(totalCost).toFixed(2)}</span>
               </div>
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
-              <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
-            </div>
+            <div>
+              <div style={{ marginBottom: 20, padding: 16, background: "#fff", borderRadius: 8, border: "1px solid #E5E5EA" }}>
+                <h5 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 12px", color: "#8E8E93", letterSpacing: 0.5, textTransform: "uppercase" }}>TAXAS & VENDAS</h5>
 
-            <div style={{ background: "#34C759", padding: 20, borderRadius: 12, color: "#fff", textAlign: "center" }}>
-              <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", fontWeight: 600 }}>Preço de Venda</label>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
-                <span style={{ fontSize: 20 }}>R$</span>
-                <input
-                  type="number"
-                  value={form.preco}
-                  onChange={e => update("preco", parseFloat(e.target.value))}
-                  onBlur={() => update("preco", parseFloat((form.preco || 0).toFixed(2)))}
-                  step="0.01"
-                  style={{ background: "transparent", border: "none", color: "#fff", fontSize: 32, fontWeight: 700, width: 140, textAlign: "center", outline: "none" }}
-                />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.impostos !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={active.impostos !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), impostos: e.target.checked } }))} />
+                    Impostos
+                  </label>
+                  <div style={{ position: "relative", width: 80 }}>
+                    <input type="number" value={form.impostos || 0} onChange={e => update("impostos", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.impostos !== false) ? "#000" : "#C7C7CC", textDecoration: (active.impostos !== false) ? "none" : "line-through" }} />
+                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (active.taxaMarketplace !== false) ? "#1C1C1E" : "#C7C7CC" }}>
+                    <input type="checkbox" checked={active.taxaMarketplace !== false} onChange={e => setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || active), taxaMarketplace: e.target.checked } }))} />
+                    Marketplace
+                  </label>
+                  <div style={{ position: "relative", width: 80 }}>
+                    <input type="number" value={form.taxaMarketplace || 0} onChange={e => update("taxaMarketplace", parseFloat(e.target.value))} style={{ ...inputStyle, width: "100%", padding: "4px 8px", paddingRight: 24, fontSize: 13, textAlign: "right", color: (active.taxaMarketplace !== false) ? "#000" : "#C7C7CC", textDecoration: (active.taxaMarketplace !== false) ? "none" : "line-through" }} />
+                    <span style={{ position: "absolute", right: 6, top: 4, fontSize: 10, color: "#8E8E93" }}>%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: "#8E8E93" }}>Lucro Desejado (%)</label>
+                <input type="number" value={form.lucroDesejado} onChange={e => update("lucroDesejado", parseFloat(e.target.value))} style={{ ...inputStyle, borderColor: "#34C759" }} />
+              </div>
+
+              <div style={{ background: "#34C759", padding: 20, borderRadius: 12, color: "#fff", textAlign: "center" }}>
+                <label style={{ fontSize: 12, opacity: 0.8, textTransform: "uppercase", fontWeight: 600 }}>Preço de Venda</label>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
+                  <span style={{ fontSize: 20 }}>R$</span>
+                  <input
+                    type="number"
+                    value={form.preco}
+                    onChange={e => update("preco", parseFloat(e.target.value))}
+                    onBlur={() => update("preco", parseFloat((form.preco || 0).toFixed(2)))}
+                    step="0.01"
+                    style={{ background: "transparent", border: "none", color: "#fff", fontSize: 32, fontWeight: 700, width: 140, textAlign: "center", outline: "none" }}
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
+
       </div>
 
-    </div>
-
-    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20, paddingTop: 20, borderTop: "1px solid #E5E5EA" }}>
-      <button onClick={onClose} style={btnSecondary}>Cancelar</button>
-      <button onClick={() => onSave(form)} style={btnPrimary}>Salvar Produto</button>
-    </div>
-  </Modal>
-);
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20, paddingTop: 20, borderTop: "1px solid #E5E5EA" }}>
+        <button onClick={onClose} style={btnSecondary}>Cancelar</button>
+        <button onClick={() => onSave(form)} style={btnPrimary}>Salvar Produto</button>
+      </div>
+    </Modal>
+  );
 }
 
 // ============================================================
