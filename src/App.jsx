@@ -1695,7 +1695,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
   const pasteTargetRef = useRef("main");
   // STATE: API Keys
-  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("print3d_gemini_key") || "");
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("print3d_gemini_key") || "AIzaSyBA_cC2aC3BP0KIXT6cAuNq7YxTWJSw9jc");
   const [extracting, setExtracting] = useState(false);
 
   const saveGeminiKey = (key) => {
