@@ -1733,23 +1733,31 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
       const prompt = `
         Analise esta imagem de um fatiador de impressão 3D (tabela de resumo ou tela principal).
-        Extraia os seguintes dados em formato JSON estrito:
+        Identifique:
+        1. Tempo de impressão (horas e minutos).
+        2. Peso total do material (gramas).
+        3. Filamentos usados (lista com cor aproximada e peso de cada um).
+
+        Extraia os dados para este JSON estrito:
         
         {
-          "tempoTotalMinutos": number, // Converta horas/minutos para total em minutos
-          "pesoTotalGramas": number, // Peso total do print
+          "tempoTotalMinutos": number, // Converta tudo para minutos
+          "pesoTotalGramas": number,
           "filamentos": [
-             { "id": 1, "pesoGramas": number, "corEstimada": "string" },
+             { "id": 1, "pesoGramas": number, "corEstimada": "string (ex: Preto, Branco, Azul)" },
              { "id": 2, "pesoGramas": number, "corEstimada": "string" }
           ]
         }
         
-        Se houver uma tabela, use os valores da coluna 'Total' para cada filamento.
-        Ignore custos monetários. Foque em PESO (g) e TEMPO.
-        Retorne APENAS o JSON, sem markdown.
+        Regras:
+        - Se houver tabela "Model | Support | Total", use a coluna TOTAL.
+        - Se houver múltiplos filamentos, liste todos.
+        - Ignore custos (R$).
+        - Retorne APENAS o JSON válido.
         `;
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+      // Using gemini-1.5-flash as it is the current standard for fast vision tasks
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
