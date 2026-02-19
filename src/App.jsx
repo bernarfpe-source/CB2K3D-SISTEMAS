@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.1 • Gemini 2.0 Fixed
+          v3.3 • Gemini Multi-Fix
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.2 (Chave Resetada)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.3 (Gemini Multi-Fix)
       </p>
     </div>
   );
@@ -1764,47 +1764,72 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         - Se houver múltiplos filamentos, liste todos.
         - Ignore custos (R$).
         - Retorne APENAS o JSON válido.
-        `;
+      `;
 
-      // Using gemini-2.0-flash as requested by the API availability list
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: "image/png", data: base64Image } }
-            ]
-          }]
-        })
-      });
+      // Models to try in order of preference/stability
+      const models = ["gemini-1.5-flash", "gemini-2.0-flash-001"];
+      let lastError = null;
 
-      const data = await response.json();
+      for (const model of models) {
+        try {
+          console.log(`Tentando modelo: ${model}...`);
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: "image/png", data: base64Image } }
+                ]
+              }]
+            })
+          });
 
-      if (data.error) throw new Error(data.error.message);
+          const data = await response.json();
 
-      const textResponse = data.candidates[0].content.parts[0].text;
-      // Clean markdown if present
-      const jsonStr = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(jsonStr);
+          if (data.error) {
+            // specific check for model not found/supported to trigger retry
+            if (data.error.message.includes("not found") || data.error.message.includes("not available") || data.error.message.includes("valid model")) {
+              console.warn(`Modelo ${model} falhou, tentando próximo...`, data.error);
+              lastError = data.error.message;
+              continue; // Try next model
+            }
+            throw new Error(data.error.message); // Other errors (processing, safety) throw immediately
+          }
+
+          const textResponse = data.candidates[0].content.parts[0].text;
+          const jsonStr = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+          return JSON.parse(jsonStr);
+
+        } catch (e) {
+          console.warn(`Erro com ${model}:`, e);
+          lastError = e.message;
+          // If it's a fetch error or parsing error, maybe try next? 
+          // For now, only specific API errors trigger 'continue' unless we want to be very aggressive.
+          // Let's assume if fetch fails, network is bad, so stop. 
+          // If JSON parse fails, AI output was bad, maybe retry? 
+          // Let's stick to the 'continue' logic above for model names only.
+          if (e.message.includes("not found") || e.message.includes("not available")) continue;
+          throw e;
+        }
+      }
+
+      throw new Error(`Falha em todos os modelos. Último erro: ${lastError}`);
 
     } catch (error) {
       console.error("Gemini Error:", error);
 
-      // DEBUG: List available models if not found
-      if (error.message.includes("not found") || error.message.includes("not supported")) {
+      // Fallback: List available models if we really failed everything
+      if (error.message.includes("not found") || error.message.includes("not supported") || error.message.includes("not available")) {
         try {
           const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
           const listData = await listResp.json();
           if (listData.models) {
             const modelNames = listData.models.map(m => m.name).join("\n");
-            alert("ERRO DE MODELO. Modelos disponíveis para sua chave:\n" + modelNames);
-            return { error: "Modelo errado. Use um destes:\n" + modelNames };
+            return { error: "Nenhum modelo compatível encontrado. Disponíveis:\n" + modelNames };
           }
-        } catch (e) {
-          console.error("List models failed", e);
-        }
+        } catch (e) { /* ignore */ }
       }
 
       return { error: error.message };
