@@ -1703,6 +1703,16 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     localStorage.setItem("print3d_gemini_key", key);
   };
 
+  // SAFETY: Clear old leaked key if present in localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem("print3d_gemini_key");
+    if (stored && stored.includes("AIzaSyB6rMwt")) {
+      console.log("Cleaning up old leaked key...");
+      localStorage.removeItem("print3d_gemini_key");
+      setGeminiKey("AIzaSyBA_cC2aC3BP0KIXT6cAuNq7YxTWJSw9jc"); // Set to new default
+    }
+  }, []);
+
   // HELPER: Convert Blob to Base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
