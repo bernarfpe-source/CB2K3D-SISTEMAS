@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.0 • Gemini 1.5 Fixed
+          v3.1 • Gemini 2.0 Fixed
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.0 (Gemini 1.5 Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.1 (Gemini 2.0 Fix)
       </p>
     </div>
   );
@@ -1756,8 +1756,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         - Retorne APENAS o JSON válido.
         `;
 
-      // Using gemini-1.5-flash as it is the current standard for fast vision tasks
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+      // Using gemini-2.0-flash as requested by the API availability list
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
