@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.6 • Cost Calc Fix
+          v3.7 • Insumos Edit
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.6 (Cost Calc Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.7 (Insumos Edit)
       </p>
     </div>
   );
@@ -4513,7 +4513,12 @@ function CustosModule() {
 
   if (!data.configCustos || !data.configCustos.vendas) return <div style={{ padding: 40, color: "#8E8E93" }}>Carregando configurações...</div>;
 
-  const { energia, trabalho, depreciacao, vendas, logistica, insumos } = data.configCustos;
+  const { energia, trabalho, depreciacao, vendas, logistica, insumos = [] } = data.configCustos;
+
+  // State for Insumo Modal
+  const [showInsumoModal, setShowInsumoModal] = useState(false);
+  const [editingInsumo, setEditingInsumo] = useState(null);
+  const [insumoForm, setInsumoForm] = useState({});
 
   const updateConfig = (section, key, val) => {
     setData(prev => ({
@@ -4525,18 +4530,31 @@ function CustosModule() {
     }));
   };
 
-  const addInsumo = () => {
-    const nome = prompt("Nome do Insumo:");
-    const custo = parseFloat(prompt("Custo Unitário (R$):"));
-    if (nome && custo) {
-      setData(prev => ({
+  const handleOpenInsumo = (item = null) => {
+    setEditingInsumo(item);
+    setInsumoForm(item ? { ...item } : { nome: "", categoria: "Geral", custo: 0, durabilidadeEstimada: 10 });
+    setShowInsumoModal(true);
+  };
+
+  const handleSaveInsumo = () => {
+    if (!insumoForm.nome) return alert("Nome é obrigatório");
+
+    setData(prev => {
+      const list = prev.configCustos.insumos || [];
+      let newList;
+      if (editingInsumo) {
+        newList = list.map(i => i.id === editingInsumo.id ? { ...insumoForm, id: i.id, custo: parseFloat(insumoForm.custo) || 0 } : i);
+        showToast("Insumo atualizado!");
+      } else {
+        newList = [...list, { ...insumoForm, id: Date.now(), custo: parseFloat(insumoForm.custo) || 0 }];
+        showToast("Insumo criado!");
+      }
+      return {
         ...prev,
-        configCustos: {
-          ...prev.configCustos,
-          insumos: [...prev.configCustos.insumos, { id: Date.now(), nome, custo, categoria: "Geral", durabilidadeEstimada: 10 }]
-        }
-      }));
-    }
+        configCustos: { ...prev.configCustos, insumos: newList }
+      };
+    });
+    setShowInsumoModal(false);
   };
 
   const removeInsumo = (id) => {
@@ -4655,7 +4673,7 @@ function CustosModule() {
       <div style={{ ...cardStyle, marginTop: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#1C1C1E" }}>🧴 Lista de Insumos &amp; Consumíveis</h3>
-          <button onClick={addInsumo} style={btnSecondary}>+ Adicionar Insumo</button>
+          <button onClick={() => handleOpenInsumo()} style={btnSecondary}>+ Adicionar Insumo</button>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -4669,12 +4687,14 @@ function CustosModule() {
               </tr>
             </thead>
             <tbody>
-              {insumos.map(insumo => (
+              {insumos && insumos.length === 0 && <tr><td colSpan="4" style={{ textAlign: "center", color: "#ccc", padding: 20 }}>Nenhum insumo cadastrado</td></tr>}
+              {insumos && insumos.map(insumo => (
                 <tr key={insumo.id} style={{ background: "#F9F9F9" }}>
                   <td style={{ padding: "12px", borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}>{insumo.nome}</td>
-                  <td style={{ padding: "12px" }}><Badge color="#8E8E93">{insumo.categoria}</Badge></td>
-                  <td style={{ padding: "12px", fontWeight: 600 }}>R$ {insumo.custo.toFixed(2)}</td>
+                  <td style={{ padding: "12px" }}><Badge color="#8E8E93">{insumo.categoria || "Geral"}</Badge></td>
+                  <td style={{ padding: "12px", fontWeight: 600 }}>R$ {(insumo.custo || 0).toFixed(2)}</td>
                   <td style={{ padding: "12px", textAlign: "right", borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>
+                    <button onClick={() => handleOpenInsumo(insumo)} style={{ border: "none", background: "none", color: "#007AFF", cursor: "pointer", marginRight: 10 }}>✎</button>
                     <button onClick={() => removeInsumo(insumo.id)} style={{ border: "none", background: "none", color: "#FF3B30", cursor: "pointer" }}>✕</button>
                   </td>
                 </tr>
@@ -4683,6 +4703,36 @@ function CustosModule() {
           </table>
         </div>
       </div>
+
+      {showInsumoModal && (
+        <Modal title={editingInsumo ? "Editar Insumo" : "Novo Insumo"} onClose={() => setShowInsumoModal(false)}>
+          <div style={{ display: "grid", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, color: "#8E8E93" }}>Nome do Insumo</label>
+              <input value={insumoForm.nome} onChange={e => setInsumoForm({ ...insumoForm, nome: e.target.value })} style={inputStyle} placeholder="Ex: Verniz, Cola, Lixa..." />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, color: "#8E8E93" }}>Categoria</label>
+              <select value={insumoForm.categoria} onChange={e => setInsumoForm({ ...insumoForm, categoria: e.target.value })} style={inputStyle}>
+                <option value="Geral">Geral</option>
+                <option value="Acabamento">Acabamento</option>
+                <option value="Químico">Químico</option>
+                <option value="Embalagem">Embalagem</option>
+                <option value="Ferramenta">Ferramenta</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, color: "#8E8E93" }}>Custo Unitário (R$)</label>
+              <input type="number" step="0.01" value={insumoForm.custo} onChange={e => setInsumoForm({ ...insumoForm, custo: e.target.value })} style={inputStyle} />
+              <p style={{ fontSize: 10, color: "#999" }}>Custo médio por unidade ou aplicação.</p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24 }}>
+            <button onClick={() => setShowInsumoModal(false)} style={btnSecondary}>Cancelar</button>
+            <button onClick={handleSaveInsumo} style={btnPrimary}>Salvar</button>
+          </div>
+        </Modal>
+      )}
 
     </div >
   );
