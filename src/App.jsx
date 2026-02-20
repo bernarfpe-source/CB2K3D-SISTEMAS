@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.3 • Gemini Multi-Fix
+          v3.4 • Expanded Models
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.3 (Gemini Multi-Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.4 (Expanded Models)
       </p>
     </div>
   );
@@ -1767,7 +1767,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
       `;
 
       // Models to try in order of preference/stability
-      const models = ["gemini-1.5-flash", "gemini-2.0-flash-001"];
+      // Based on user feedback, their key has access into 2.0/2.5 series
+      const models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.0-flash-001"];
       let lastError = null;
 
       for (const model of models) {
