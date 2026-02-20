@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.5 • Kanban Bridge
+          v4.6 • Cancel Production
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.5 (Kanban Bridge)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.6 (Cancel Production)
       </p>
     </div>
   );
@@ -3760,6 +3760,53 @@ function KanbanModule() {
     { title: "Pronto / Enviado ✅", statuses: ["concluido", "enviado", "entregue"], color: "#34C759" },
   ];
 
+  const handleCancel = (item) => {
+    if (!window.confirm("Cancelar esta produção? O item será removido do painel.\n(Materiais consumidos serão estornados)")) return;
+
+    setData(prev => {
+      let updatedMaterials = [...prev.materiais];
+      let log = [];
+
+      // REFUND LOGIC
+      const consumingStatuses = ["aprovado", "producao", "imprimindo", "acabamento", "enviado", "entregue", "concluido", "posProcessamento"];
+      if (consumingStatuses.includes(item.status) && item.itens) {
+        item.itens.forEach(orderItem => {
+          const product = prev.produtos.find(p => p.nome === orderItem.produto) || prev.produtos.find(p => p.nome.toLowerCase() === (orderItem.produto || "").toLowerCase());
+
+          if (product && product.composicao) {
+            product.composicao.forEach(comp => {
+              const totalGrams = (comp.peso || 0) * (orderItem.quantidade || 0);
+              // Robust Lookup
+              let matIndex = updatedMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
+              if (matIndex === -1 && comp.tipo && comp.cor) {
+                const tType = (comp.tipo || "").toLowerCase().trim();
+                const tColor = (comp.cor || "").toLowerCase().trim();
+                matIndex = updatedMaterials.findIndex(m => {
+                  const mT = (m.tipo || "").toLowerCase().trim();
+                  const mC = (m.cor || "").toLowerCase().trim();
+                  return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
+                });
+              }
+
+              if (matIndex >= 0) {
+                updatedMaterials[matIndex] = { ...updatedMaterials[matIndex], quantidadeAtual: (updatedMaterials[matIndex].quantidadeAtual || 0) + totalGrams };
+                log.push(`${updatedMaterials[matIndex].nome} (+${totalGrams}g)`);
+              }
+            });
+          }
+        });
+      }
+
+      showToast(`Cancelado! ${log.length ? "Reembolso: " + log.join(", ") : ""}`, "warning");
+
+      return {
+        ...prev,
+        pedidos: prev.pedidos.map(p => p.id === item.id ? { ...p, status: "cancelado" } : p),
+        materiais: updatedMaterials
+      };
+    });
+  };
+
   const handleDragStart = (e, item) => {
     setDraggedItem(item);
     e.dataTransfer.effectAllowed = "move";
@@ -4011,6 +4058,7 @@ function KanbanModule() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F2F2F7", paddingTop: 8 }}>
                     <div style={{ fontSize: 11, color: "#8E8E93" }}>{new Date(item.dataPedido).toLocaleDateString()}</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#1C1C1E" }}>R$ {(item.valorTotal || 0).toFixed(2)}</div>
+                    <button onClick={(e) => { e.stopPropagation(); handleCancel(item); }} title="Cancelar Produção" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: "0 4px", opacity: 0.6 }}>⛔</button>
                   </div>
                 </div>
               );
