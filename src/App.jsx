@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.3 • UI Reorder
+          v4.4 • Post-Print Costs
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.3 (UI Reorder)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.4 (Post-Print Costs)
       </p>
     </div>
   );
@@ -2381,14 +2381,18 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
   // Calculate Base based on ACTIVE costs
   const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true, insumos: true };
-  const calculatedBase = parseFloat((
+
+  // 1. Custo Impressão (Standard)
+  const custoImpressao = parseFloat((
     (active.maoDeObra ? custoMaoDeObra : 0) +
     (active.depreciacao ? custoDepreciacao : 0) +
     (active.manutencao ? custoManutencao : 0) +
     (active.material ? custoMaterial : 0) +
-    (active.energia ? custoEnergia : 0) +
-    custoInsumos
+    (active.energia ? custoEnergia : 0)
   ).toFixed(2));
+
+  // 2. Custo Base (Impressão + Insumos)
+  const calculatedBase = parseFloat((custoImpressao + custoInsumos).toFixed(2));
 
   const totalCost = calculatedBase +
     ((active.embalagem !== false) ? (form.custoEmbalagem || 0) : 0) +
@@ -2765,7 +2769,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
-              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Custos de Impressão</h4>
 
               {[
                 { key: "material", label: "Material (Filamento)", val: custoMaterial },
@@ -2773,11 +2777,6 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
                 { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
                 { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
                 { key: "maoDeObra", label: "Mão de Obra (Técnica)", val: custoMaoDeObra },
-                // Expanded Insumos (Now at bottom)
-                ...(form.insumos || []).map(id => {
-                  const item = (config?.insumos || []).find(i => i.id === id);
-                  return item ? { key: `insumo_${id}`, label: item.nome, val: item.custo } : null;
-                }).filter(Boolean)
               ].map(item => (
                 <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
@@ -2790,15 +2789,19 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
                 </div>
               ))}
 
-              <div style={{ height: 16 }} />
+              <div style={{ display: "flex", justifyContent: "space-between", margin: "12px 0", fontSize: 13, fontWeight: 500, color: "#666", borderTop: "1px dashed #E5E5EA", paddingTop: 8 }}>
+                <span>Subtotal Impressão</span>
+                <span>R$ {custoImpressao.toFixed(2)}</span>
+              </div>
 
-              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Adicionar Insumos &amp; Acabamento</h4>
+              <h4 style={{ margin: "24px 0 12px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Insumos &amp; Acabamento (Pós-Impressão)</h4>
               <div style={{
                 marginBottom: 20, maxHeight: 180, overflowY: "auto",
                 border: "1px solid #E5E5EA", borderRadius: 8, background: "#fff"
               }}>
                 {(config?.insumos || []).map(ins => {
                   const isSelected = (form.insumos || []).includes(ins.id);
+                  const isIncluded = form.activeCosts?.[`insumo_${ins.id}`] !== false;
                   return (
                     <div key={ins.id}
                       onClick={() => {
@@ -2817,9 +2820,17 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
                         }}>
                           {isSelected && "✓"}
                         </div>
-                        <span style={{ fontSize: 13, color: isSelected ? "#1C1C1E" : "#48484A", fontWeight: isSelected ? 500 : 400 }}>{ins.nome}</span>
+                        <span style={{ fontSize: 13, color: isSelected ? (isIncluded ? "#1C1C1E" : "#999") : "#48484A", fontWeight: isSelected ? 500 : 400, textDecoration: isIncluded ? "none" : "line-through" }}>{ins.nome}</span>
                       </div>
-                      <span style={{ fontSize: 13, color: isSelected ? "#5856D6" : "#8E8E93", fontWeight: isSelected ? 600 : 400 }}>+ R$ {ins.custo.toFixed(2)}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {isSelected && (
+                          <input type="checkbox" title="Incluir no custo" checked={isIncluded} onClick={(e) => {
+                            e.stopPropagation();
+                            setForm(prev => ({ ...prev, activeCosts: { ...prev.activeCosts, [`insumo_${ins.id}`]: !isIncluded } }));
+                          }} />
+                        )}
+                        <span style={{ fontSize: 13, color: isSelected ? (isIncluded ? "#5856D6" : "#C7C7CC") : "#8E8E93", fontWeight: isSelected ? 600 : 400, textDecoration: isIncluded ? "none" : "line-through" }}>+ R$ {ins.custo.toFixed(2)}</span>
+                      </div>
                     </div>
                   );
                 })}
