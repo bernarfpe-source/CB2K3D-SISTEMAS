@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.0 • Insumos &amp; Pricing Update
+          v4.1 • Detailed Insumos
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.0 (Insumos &amp; Pricing)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.1 (Detailed Insumos)
       </p>
     </div>
   );
@@ -2372,6 +2372,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
   }, 0).toFixed(2));
 
   const custoInsumos = (form.insumos || []).reduce((acc, id) => {
+    if (form.activeCosts?.[`insumo_${id}`] === false) return acc;
     const item = (config?.insumos || []).find(i => i.id === id);
     return acc + (item ? (item.custo || 0) : 0);
   }, 0);
@@ -2386,7 +2387,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     (active.manutencao ? custoManutencao : 0) +
     (active.material ? custoMaterial : 0) +
     (active.energia ? custoEnergia : 0) +
-    (active.insumos ? custoInsumos : 0)
+    custoInsumos
   ).toFixed(2));
 
   const totalCost = calculatedBase +
@@ -2790,7 +2791,11 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
               {[
                 { key: "material", label: "Material (Filamento)", val: custoMaterial },
-                { key: "insumos", label: `Insumos (${(form.insumos || []).length})`, val: custoInsumos },
+                // Expanded Insumos
+                ...(form.insumos || []).map(id => {
+                  const item = (config?.insumos || []).find(i => i.id === id);
+                  return item ? { key: `insumo_${id}`, label: item.nome, val: item.custo } : null;
+                }).filter(Boolean),
                 { key: "energia", label: "Energia Elétrica", val: custoEnergia },
                 { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
                 { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
