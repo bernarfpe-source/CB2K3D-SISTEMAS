@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.4 • Expanded Models
+          v3.5 • Expanded Models (Retry Fix)
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.4 (Expanded Models)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.5 (Expanded Models Retry Fix)
       </p>
     </div>
   );
@@ -1791,7 +1791,9 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
           if (data.error) {
             // specific check for model not found/supported to trigger retry
-            if (data.error.message.includes("not found") || data.error.message.includes("not available") || data.error.message.includes("valid model")) {
+            // Relaxed check: "available", "found", "supported", "model"
+            const msg = data.error.message.toLowerCase();
+            if (msg.includes("not found") || msg.includes("available") || msg.includes("supported") || msg.includes("valid model")) {
               console.warn(`Modelo ${model} falhou, tentando próximo...`, data.error);
               lastError = data.error.message;
               continue; // Try next model
@@ -1806,29 +1808,28 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
         } catch (e) {
           console.warn(`Erro com ${model}:`, e);
           lastError = e.message;
-          // If it's a fetch error or parsing error, maybe try next? 
-          // For now, only specific API errors trigger 'continue' unless we want to be very aggressive.
-          // Let's assume if fetch fails, network is bad, so stop. 
-          // If JSON parse fails, AI output was bad, maybe retry? 
-          // Let's stick to the 'continue' logic above for model names only.
-          if (e.message.includes("not found") || e.message.includes("not available")) continue;
-          throw e;
+          const msg = e.message.toLowerCase();
+          // Retry on connection or model errors
+          if (msg.includes("not found") || msg.includes("available") || msg.includes("supported")) continue;
+          // If it is a fetch failure (network), we might want to continue too?
+          if (msg.includes("fetch") || msg.includes("network")) continue;
+          throw e; // Syntax errors etc
         }
       }
 
-      throw new Error(`Falha em todos os modelos. Último erro: ${lastError}`);
+      throw new Error(`Nenhum modelo funcionou. Último erro: ${lastError}`);
 
     } catch (error) {
       console.error("Gemini Error:", error);
 
       // Fallback: List available models if we really failed everything
-      if (error.message.includes("not found") || error.message.includes("not supported") || error.message.includes("not available")) {
+      if (error.message.includes("available") || error.message.includes("model")) {
         try {
           const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
           const listData = await listResp.json();
           if (listData.models) {
             const modelNames = listData.models.map(m => m.name).join("\n");
-            return { error: "Nenhum modelo compatível encontrado. Disponíveis:\n" + modelNames };
+            return { error: "Erro de modelos. Disponíveis para sua chave:\n" + modelNames };
           }
         } catch (e) { /* ignore */ }
       }
