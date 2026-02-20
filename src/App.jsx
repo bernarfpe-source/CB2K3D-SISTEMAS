@@ -459,7 +459,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.5 • Expanded Models (Retry Fix)
+          v3.6 • Cost Calc Fix
         </div>
       </div>
 
@@ -1405,7 +1405,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.5 (Expanded Models Retry Fix)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.6 (Cost Calc Fix)
       </p>
     </div>
   );
@@ -1940,17 +1940,20 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
 
           const fillets = geminiData.filamentos || [];
           if (fillets.length > 0) {
+            // Assign default material to avoid zero cost
+            const defaultMatId = (materials && materials.length > 0) ? materials[0].id : "";
+
             const newPartes = fillets.map((f, i) => ({
               id: Date.now() + i,
               nome: `Filamento ${f.id} (${f.corEstimada || 'Auto'})`,
-              materialId: "",
+              materialId: defaultMatId,
               peso: f.pesoGramas,
               tempo: updates.tempoImpressao ? Math.round(updates.tempoImpressao * (f.pesoGramas / geminiData.pesoTotalGramas)) : 0,
               foto: ""
             }));
 
             const newComp = newPartes.map(p => ({
-              materialId: "", peso: p.peso, tipo: "", cor: ""
+              materialId: defaultMatId, peso: p.peso, tipo: "", cor: ""
             }));
 
             updates.partes = newPartes;
