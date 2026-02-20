@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.6 • Cancel Production
+          v4.7.1 • Delete Fix
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.6 (Cancel Production)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.7.1 (Delete Fix)
       </p>
     </div>
   );
@@ -3760,8 +3760,8 @@ function KanbanModule() {
     { title: "Pronto / Enviado ✅", statuses: ["concluido", "enviado", "entregue"], color: "#34C759" },
   ];
 
-  const handleCancel = (item) => {
-    if (!window.confirm("Cancelar esta produção? O item será removido do painel.\n(Materiais consumidos serão estornados)")) return;
+  const handleDelete = (item) => {
+    if (!window.confirm("Excluir esta produção? O item será apagado permanentemente.\n(Materiais consumidos serão estornados)")) return;
 
     setData(prev => {
       let updatedMaterials = [...prev.materiais];
@@ -3797,11 +3797,11 @@ function KanbanModule() {
         });
       }
 
-      showToast(`Cancelado! ${log.length ? "Reembolso: " + log.join(", ") : ""}`, "warning");
+      showToast(`Excluído! ${log.length ? "Reembolso: " + log.join(", ") : ""}`, "warning");
 
       return {
         ...prev,
-        pedidos: prev.pedidos.map(p => p.id === item.id ? { ...p, status: "cancelado" } : p),
+        pedidos: prev.pedidos.filter(p => p.id !== item.id),
         materiais: updatedMaterials
       };
     });
@@ -4058,7 +4058,7 @@ function KanbanModule() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F2F2F7", paddingTop: 8 }}>
                     <div style={{ fontSize: 11, color: "#8E8E93" }}>{new Date(item.dataPedido).toLocaleDateString()}</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#1C1C1E" }}>R$ {(item.valorTotal || 0).toFixed(2)}</div>
-                    <button onClick={(e) => { e.stopPropagation(); handleCancel(item); }} title="Cancelar Produção" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: "0 4px", opacity: 0.6 }}>⛔</button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(item); }} title="Excluir Produção" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: "0 4px", opacity: 0.6 }}>🗑️</button>
                   </div>
                 </div>
               );
