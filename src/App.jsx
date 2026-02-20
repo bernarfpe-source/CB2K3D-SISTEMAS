@@ -129,10 +129,12 @@ export default function App() {
   useEffect(() => {
     setData(prev => {
       const current = prev.configCustos || {};
-      if (!current.vendas || !current.logistica || !current.energia) {
+      // Check if ANY required section is missing, including new 'insumos'
+      if (!current.vendas || !current.logistica || !current.energia || !current.insumos) {
         return {
           ...prev,
           configCustos: {
+            ...current,
             energia: { custoKwh: 0.95, consumoMedioFDM: 150, consumoMedioResina: 50, ...current.energia },
             trabalho: { horaTecnica: 35.00, horaModelagem: 60.00, ...current.trabalho },
             depreciacao: { vidaUtilHoras: 2000, manutencaoPercent: 10, ...current.depreciacao },
@@ -459,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v3.7 • Insumos Edit
+          v4.0 • Insumos &amp; Pricing Update
         </div>
       </div>
 
@@ -1405,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v3.7 (Insumos Edit)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.0 (Insumos &amp; Pricing)
       </p>
     </div>
   );
@@ -1684,7 +1686,8 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     tempoImpressao: 0, composicao: [], partes: [],
     // Print Profile Config
     perfil: { impressora: "A1", camada: "0.20", paredes: 3, preenchimento: "15%", bico: "0.4" },
-    activeCosts: { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true },
+    insumos: product?.insumos || [],
+    activeCosts: { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, insumos: true },
     custoBase: 0,
     custoEmbalagem: config?.logistica?.custoEmbalagemPadrao || 0,
     custoFrete: config?.logistica?.custoFretePadrao || 0,
@@ -2362,22 +2365,28 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
     } else {
       // Debug Log
       // console.log("Matched:", m.nome, "Cost/Kg:", m.custoKg);
-    }
+    };
 
     const pricePerGram = m ? (m.custoKg / 1000) : 0;
     return acc + ((item.peso || 0) * pricePerGram);
   }, 0).toFixed(2));
 
+  const custoInsumos = (form.insumos || []).reduce((acc, id) => {
+    const item = (config?.insumos || []).find(i => i.id === id);
+    return acc + (item ? (item.custo || 0) : 0);
+  }, 0);
+
   const custoEnergia = parseFloat(((cfg.energia.consumoMedioFDM * tempoHoras / 1000) * cfg.energia.custoKwh).toFixed(2));
 
   // Calculate Base based on ACTIVE costs
-  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true };
+  const active = form.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, taxaMarketplace: true, impostos: true, insumos: true };
   const calculatedBase = parseFloat((
     (active.maoDeObra ? custoMaoDeObra : 0) +
     (active.depreciacao ? custoDepreciacao : 0) +
     (active.manutencao ? custoManutencao : 0) +
     (active.material ? custoMaterial : 0) +
-    (active.energia ? custoEnergia : 0)
+    (active.energia ? custoEnergia : 0) +
+    (active.insumos ? custoInsumos : 0)
   ).toFixed(2));
 
   const totalCost = calculatedBase +
@@ -2755,10 +2764,33 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1E", borderBottom: "1px solid #E5E5EA", paddingBottom: 8, marginBottom: 16 }}>PRECIFICAÇÃO</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Insumos &amp; Acabamento</h4>
+              <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {(config?.insumos || []).map(ins => {
+                  const isSelected = (form.insumos || []).includes(ins.id);
+                  return (
+                    <button key={ins.id}
+                      onClick={() => {
+                        const current = form.insumos || [];
+                        const newInsumos = isSelected ? current.filter(id => id !== ins.id) : [...current, ins.id];
+                        setForm(prev => ({ ...prev, insumos: newInsumos }));
+                      }}
+                      style={{
+                        padding: "6px 12px", borderRadius: 20, fontSize: 11, border: isSelected ? "1px solid #5856D6" : "1px solid #E5E5EA",
+                        background: isSelected ? "#F0F0FF" : "#fff", color: isSelected ? "#5856D6" : "#1C1C1E", cursor: "pointer", transition: "all 0.2s"
+                      }}>
+                      {ins.nome} <span style={{ opacity: 0.6 }}>(+R$ {ins.custo.toFixed(2)})</span>
+                    </button>
+                  );
+                })}
+                {(config?.insumos || []).length === 0 && <span style={{ fontSize: 11, color: "#999" }}>Sem insumos configurados.</span>}
+              </div>
+
               <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
 
               {[
                 { key: "material", label: "Material (Filamento)", val: custoMaterial },
+                { key: "insumos", label: `Insumos (${(form.insumos || []).length})`, val: custoInsumos },
                 { key: "energia", label: "Energia Elétrica", val: custoEnergia },
                 { key: "depreciacao", label: "Depreciação Máquina", val: custoDepreciacao },
                 { key: "manutencao", label: "Manutenção Prevista", val: custoManutencao },
@@ -2767,7 +2799,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
                 <div key={item.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: (form.activeCosts?.[item.key] !== false) ? "#1C1C1E" : "#C7C7CC", alignItems: "center" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
                     <input type="checkbox" checked={form.activeCosts?.[item.key] !== false} onChange={e => {
-                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true }), [item.key]: e.target.checked } }));
+                      setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, insumos: true }), [item.key]: e.target.checked } }));
                     }} />
                     {item.label}
                   </label>
@@ -2785,7 +2817,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.embalagem !== false) ? "#1C1C1E" : "#C7C7CC" }}>
                   <input type="checkbox" checked={form.activeCosts?.embalagem !== false} onChange={e => {
-                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), embalagem: e.target.checked } }));
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, insumos: true }), embalagem: e.target.checked } }));
                   }} />
                   Embalagem
                 </label>
@@ -2794,7 +2826,7 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: (form.activeCosts?.frete !== false) ? "#1C1C1E" : "#C7C7CC" }}>
                   <input type="checkbox" checked={form.activeCosts?.frete !== false} onChange={e => {
-                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true }), frete: e.target.checked } }));
+                    setForm(prev => ({ ...prev, activeCosts: { ...(prev.activeCosts || { material: true, energia: true, depreciacao: true, manutencao: true, maoDeObra: true, frete: true, embalagem: true, insumos: true }), frete: e.target.checked } }));
                   }} />
                   Frete / Logística
                 </label>
