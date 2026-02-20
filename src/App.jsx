@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.4 • Post-Print Costs
+          v4.5 • Kanban Bridge
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.4 (Post-Print Costs)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.5 (Kanban Bridge)
       </p>
     </div>
   );
@@ -1596,48 +1596,26 @@ function ProductsModule() {
   };
 
   const handleProduce = (product) => {
-    const qtyStr = prompt(`Quantas unidades de '${product.nome}' você produziu para estoque? (Irá descontar material)`, "1");
+    const qtyStr = prompt(`Enviar para produção (Kanban)?\nQuantas unidades de '${product.nome}'?`, "1");
     if (!qtyStr) return;
     const qty = parseInt(qtyStr);
     if (!qty || qty <= 0) return;
 
-    setData(prev => {
-      let newMaterials = [...prev.materiais];
-      let newProducts = [...prev.produtos];
-      let log = [];
-
-      if (product.composicao) {
-        product.composicao.forEach(comp => {
-          const totalGrams = (comp.peso || 0) * qty;
-          let matIndex = newMaterials.findIndex(m => String(m.id).trim() === String(comp.materialId).trim());
-          if (matIndex === -1 && comp.tipo && comp.cor) {
-            const tType = (comp.tipo || "").toLowerCase().trim();
-            const tColor = (comp.cor || "").toLowerCase().trim();
-            matIndex = newMaterials.findIndex(m => {
-              const mT = (m.tipo || "").toLowerCase().trim();
-              const mC = (m.cor || "").toLowerCase().trim();
-              return (mT === tType && mC === tColor) || ((m.nome || "").toLowerCase().includes(tType) && (m.nome || "").toLowerCase().includes(tColor));
-            });
-          }
-
-          if (matIndex >= 0) {
-            const current = parseFloat(newMaterials[matIndex].quantidadeAtual || 0);
-            newMaterials[matIndex] = { ...newMaterials[matIndex], quantidadeAtual: Math.max(0, current - totalGrams) };
-            log.push(`${newMaterials[matIndex].nome}: -${totalGrams}g`);
-          }
-        });
-      }
-
-      const pIndex = newProducts.findIndex(p => p.id === product.id);
-      if (pIndex >= 0) {
-        const currentStock = newProducts[pIndex].estoqueAtual || 0;
-        newProducts[pIndex] = { ...newProducts[pIndex], estoqueAtual: currentStock + qty };
-      }
-
-      showToast(`Produzido +${qty} un. ${log.join(", ")}`, "success");
-
-      return { ...prev, materiais: newMaterials, produtos: newProducts };
-    });
+    setData(prev => ({
+      ...prev,
+      // Create a "Stock Order"
+      pedidos: [...prev.pedidos, {
+        id: generateId(),
+        clienteId: "ESTOQUE",
+        status: "fila",
+        dataPedido: new Date().toISOString().split("T")[0],
+        itens: [{ produto: product.nome, quantidade: qty, valorUnitario: product.preco }],
+        valorTotal: (product.preco || 0) * qty,
+        formaPagamento: "Interno",
+        observacoes: "Produção para Estoque"
+      }]
+    }));
+    showToast(`Enviado para o Kanban: ${qty}x ${product.nome}`, "success");
   };
 
   return (
@@ -3835,7 +3813,9 @@ function KanbanModule() {
 
             if (prodIndex >= 0) {
               const available = newProducts[prodIndex].estoqueAtual || 0;
-              if (available > 0) {
+
+              // LOGIC: If Client Order -> Consume Stock first. If Stock Order -> Always Produce (don't consume existing)
+              if (draggedItem.clienteId !== "ESTOQUE" && available > 0) {
                 const take = Math.min(qtyToMake, available);
                 qtyToMake -= take;
                 newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: available - take };
@@ -3930,6 +3910,20 @@ function KanbanModule() {
         }
       }
 
+      // STOCK ORDER COMPLETION Logic
+      if (draggedItem.clienteId === "ESTOQUE" && ["enviado", "entregue", "concluido"].includes(newStatus) && !["enviado", "entregue", "concluido"].includes(draggedItem.status)) {
+        // Stock Order Finished -> Add to Stock
+        if (draggedItem.itens) {
+          draggedItem.itens.forEach(orderItem => {
+            let prodIndex = newProducts.findIndex(p => p.nome === orderItem.produto);
+            if (prodIndex >= 0) {
+              newProducts[prodIndex] = { ...newProducts[prodIndex], estoqueAtual: (newProducts[prodIndex].estoqueAtual || 0) + (orderItem.quantidade || 0) };
+              moveMsg += ` +${orderItem.quantidade} Estoque`;
+            }
+          });
+        }
+      }
+
       setData(prev => ({
         ...prev,
         financeiro: newFinanceiro,
@@ -4008,7 +4002,11 @@ function KanbanModule() {
                     </div>
                   </div>
 
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>{item.clienteId ? data.clientes.find(c => c.id === item.clienteId)?.nome : "Cliente não ident."}</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+                    {item.clienteId === "ESTOQUE" ?
+                      <span style={{ fontWeight: 700, color: "#007AFF" }}>📦 ESTOQUE INTERNO</span> :
+                      (item.clienteId ? data.clientes.find(c => c.id === item.clienteId)?.nome : "Cliente não ident.")}
+                  </div>
 
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F2F2F7", paddingTop: 8 }}>
                     <div style={{ fontSize: 11, color: "#8E8E93" }}>{new Date(item.dataPedido).toLocaleDateString()}</div>
