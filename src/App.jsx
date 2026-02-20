@@ -461,7 +461,7 @@ function LoginPage({ onLogin, toast }) {
           </button>
         </form>
         <div style={{ marginTop: 24, fontSize: 12, color: "#C7C7CC" }}>
-          v4.1 • Detailed Insumos
+          v4.2 • Insumos Scroll
         </div>
       </div>
 
@@ -1407,7 +1407,7 @@ function FormField({ field, value, onChange, formValues = {}, setForm }) {
         style={field.type === "password" ? { ...base, textTransform: "none" } : base}
       />
       <p style={{ fontSize: 10, color: "#8E8E93", textAlign: "center", marginTop: 20 }}>
-        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.1 (Detailed Insumos)
+        &copy; {new Date().getFullYear()} Gerenciador de Impressão 3D - v4.2 (Insumos Scroll)
       </p>
     </div>
   );
@@ -2766,25 +2766,37 @@ function ProductFormModal({ product, onClose, onSave, materials, config }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div style={{ background: "#F2F2F7", padding: 20, borderRadius: 12 }}>
               <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Insumos &amp; Acabamento</h4>
-              <div style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <div style={{
+                marginBottom: 20, maxHeight: 180, overflowY: "auto",
+                border: "1px solid #E5E5EA", borderRadius: 8, background: "#fff"
+              }}>
                 {(config?.insumos || []).map(ins => {
                   const isSelected = (form.insumos || []).includes(ins.id);
                   return (
-                    <button key={ins.id}
+                    <div key={ins.id}
                       onClick={() => {
                         const current = form.insumos || [];
                         const newInsumos = isSelected ? current.filter(id => id !== ins.id) : [...current, ins.id];
                         setForm(prev => ({ ...prev, insumos: newInsumos }));
                       }}
                       style={{
-                        padding: "6px 12px", borderRadius: 20, fontSize: 11, border: isSelected ? "1px solid #5856D6" : "1px solid #E5E5EA",
-                        background: isSelected ? "#F0F0FF" : "#fff", color: isSelected ? "#5856D6" : "#1C1C1E", cursor: "pointer", transition: "all 0.2s"
+                        padding: "10px 14px", borderBottom: "1px solid #F2F2F7", display: "flex", alignItems: "center", justifyContent: "space-between",
+                        background: isSelected ? "#F0F0FF" : "transparent", cursor: "pointer", transition: "all 0.2s"
                       }}>
-                      {ins.nome} <span style={{ opacity: 0.6 }}>(+R$ {ins.custo.toFixed(2)})</span>
-                    </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{
+                          width: 18, height: 18, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center",
+                          border: isSelected ? "1px solid #5856D6" : "1px solid #C7C7CC", background: isSelected ? "#5856D6" : "#fff", fontSize: 12, color: "#fff", fontWeight: 700
+                        }}>
+                          {isSelected && "✓"}
+                        </div>
+                        <span style={{ fontSize: 13, color: isSelected ? "#1C1C1E" : "#48484A", fontWeight: isSelected ? 500 : 400 }}>{ins.nome}</span>
+                      </div>
+                      <span style={{ fontSize: 13, color: isSelected ? "#5856D6" : "#8E8E93", fontWeight: isSelected ? 600 : 400 }}>+ R$ {ins.custo.toFixed(2)}</span>
+                    </div>
                   );
                 })}
-                {(config?.insumos || []).length === 0 && <span style={{ fontSize: 11, color: "#999" }}>Sem insumos configurados.</span>}
+                {(config?.insumos || []).length === 0 && <div style={{ padding: 16, fontSize: 13, color: "#999", textAlign: "center" }}>Sem insumos configurados.</div>}
               </div>
 
               <h4 style={{ margin: "0 0 16px", fontSize: 13, color: "#48484A", textTransform: "uppercase", letterSpacing: 0.5 }}>Detalhamento de Custos (Marque para cobrar)</h4>
